@@ -1,0 +1,24 @@
+# One-click deploy on Render: New > Blueprint > point at this repo.
+# Free tier sleeps after ~15 min idle; hit /healthz before the demo to wake it.
+services:
+  - type: web
+    name: senior-checkin-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: MOCK_MODE
+        value: "true"
+      - key: PUBLIC_WEB_BASE
+        value: https://senior-checkin.vercel.app
+      # Set these in the Render dashboard, not here. Never commit a key.
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LINQ_API_KEY
+        sync: false
+      - key: LINQ_WEBHOOK_SECRET
+        sync: false
