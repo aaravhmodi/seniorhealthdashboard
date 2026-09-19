@@ -8,6 +8,7 @@ feature. With one loaded year we still fit a runtime scorer, but metrics say
 from __future__ import annotations
 
 import json
+import logging
 import math
 import pathlib
 from datetime import date
@@ -22,6 +23,7 @@ FEATURE_COLUMNS = (
 )
 LEAKAGE_COLUMNS = {"disposition", "admitted", "diagnosis_code", "weighted_n", "rate"}
 METRICS_PATH = pathlib.Path(__file__).resolve().parents[2] / "data" / "model_metrics.json"
+log = logging.getLogger(__name__)
 
 
 def _rows() -> list[dict]:
@@ -108,8 +110,14 @@ def runtime_model():
 def refresh() -> dict:
     runtime_model.cache_clear()
     _, metrics = runtime_model()
-    METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    METRICS_PATH.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    # Vercel's deployed function bundle is read-only.  The runtime metrics
+    # remain available through /datasets/status; persistence is only a local
+    # convenience and must not prevent application startup in serverless mode.
+    try:
+        METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        METRICS_PATH.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not persist model metrics at %s: %s", METRICS_PATH, exc)
     return metrics
 
 
