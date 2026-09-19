@@ -1,7 +1,7 @@
 import type { CarePlan, CheckIn, Evaluation, Senior } from './types'
 
 export const demoSenior: Senior = {
-  id: 'senior_00001', display_name: 'Maria Santos', date_of_birth: '1947-03-08', age: 79, preferred_language: 'es',
+  id: 'sen_rosa', display_name: 'Rosa Mendez', date_of_birth: '1947-03-14', age: 79, preferred_language: 'es',
   conditions: ['High blood pressure', 'Type 2 diabetes'], allergies: ['Penicillin'],
   medications: [
     { id: 'm1', name: 'Metformin', dose: '500 mg', schedule: 'With breakfast and dinner' },
