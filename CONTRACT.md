@@ -38,6 +38,10 @@ rung. Nothing lowers a rule's floor.
 | GET | `/handoff/{senior_id}?force=` | `HandoffPacket` | 404 below level 3 unless `force=true` |
 | GET | `/evidence/preview?senior_id=&text=` | `EvidenceCard[]` | no check-in stored |
 | GET | `/events/recent?limit=` | `WSEvent[]` | polling fallback for the socket |
+| GET | `/voice/agent-config/{senior_id}` | Deepgram Settings frame | senior-tuned endpointing, retrieved context inlined |
+| GET | `/retrieval/search?q=&senior_id=&k=` | scored chunks | inspect what the model is given |
+| POST | `/retrieval/reindex` | `{indexed_chunks}` | rebuild the vector index |
+| GET | `/datasets/status` | warehouse + table availability | which cards are real vs MOCK |
 | POST | `/webhooks/linq` | `{ok, senior_id, ...}` | backend only, signature-checked off mock |
 | POST | `/demo/reset` | `Health` | re-seeds; safe to call between demo runs |
 | GET | `/demo/scenarios` | scripted demo inputs + expected level | |
@@ -72,7 +76,10 @@ rung. Nothing lowers a rule's floor.
     "recommended_actions": ["Go to the emergency department now.", "..."],
     "confidence": 0.77,
     "escalated_for_uncertainty": false,
-    "requires_human_review": true
+    "requires_human_review": true,
+    "llm_used": true,
+    "llm_fallback_reason": null,
+    "context_citations": ["[guideline: ...]", "[patient_history: check-in chk_00012]"]
   },
   "notifications": [{ "to": "cg_priya", "body": "Rosa needs to be seen ...", "status": "mocked" }]
 }
@@ -109,11 +116,16 @@ Event types: `checkin.created`, `evaluation.completed`, `level.changed`,
    is the clinician string and is always English.
 4. **`escalated_for_uncertainty: true`** means we did not hear enough and rounded
    up. Say so in the UI; it is a trust feature, not a bug.
-5. Caregiver texts carry a status word and a link. Never render PHI as if it
+5. **`llm_used: false` with a `llm_fallback_reason`** means the deterministic
+   template was used. That is a normal, safe state, not an error to surface.
+6. **`_meta.voice_output: false`** from the voice config means Deepgram has no
+   voice for that language. Render text and show the "you can also type" line.
+7. Caregiver texts carry a status word and a link. Never render PHI as if it
    had been sent by SMS.
 
 ## Seeded demo data
 
 `sen_rosa` (79, Spanish, 4 meds, 14 days of history with dizziness and poor
 appetite trending up), `sen_chen` (84, Chinese, warfarin), `sen_walter` (76,
-English, steady control case). All synthetic. `POST /demo/reset` restores them.
+English, steady control case), `sen_henriette` (82, French, text-fallback
+because Deepgram has no French voice). All synthetic. `POST /demo/reset` restores them.
