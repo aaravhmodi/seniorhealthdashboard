@@ -12,6 +12,11 @@ export interface Symptom { label: string; severity?: number; onset?: string; is_
 export interface CheckIn { id: string; created_at: string; raw_text?: string; symptoms: Symptom[]; source: string }
 export interface Evaluation {
   level: ActionLevel; level_label: string; explanation: string; explanation_en?: string
-  recommended_actions: string[]; confidence: number; red_flags: { label: string }[]
+  recommended_actions: string[]; confidence: number; red_flags: { label: string; matched_on?: string[]; forces_level?: ActionLevel }[]
+  evidence?: EvidenceCard[]; requires_human_review?: boolean; model_risk?: number
+}
+export interface EvidenceCard {
+  kind: string; title: string; detail: string; source: string; weight?: number
+  stat?: { value: number; unit: string; n?: number; ci_low?: number; ci_high?: number }
 }
 export interface CheckInResponse { checkin: CheckIn; evaluation: Evaluation }
