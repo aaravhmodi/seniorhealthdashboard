@@ -28,7 +28,10 @@ mkdir -p backend/data/raw/{nhamcs,neiss,faers}
   possible, so keep it.
 - **FAERS** — <https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html>
   Download the **ASCII** quarters and unzip each so `DEMO*.txt`, `DRUG*.txt` and
-  `REAC*.txt` sit together in one folder per quarter.
+  `REAC*.txt` sit together in one folder per quarter. **Start at 2014 Q3** —
+  `PROD_AI` (the curated active ingredient) does not exist before it, and the
+  loader refuses older quarters by name rather than silently keying signals on
+  free text.
 
 ## Load them
 
@@ -74,6 +77,25 @@ clinician.
 **Haldane–Anscombe correction** (+0.5 to each cell of the 2×2) before computing
 ROR. A drug reported only ever with one event gives a zero cell, which divides
 by zero and silently deletes exactly the strongest signals.
+
+**Primary suspect only.** Each DRUG row carries `ROLE_COD`: PS (primary
+suspect), SS, C (concomitant) or I. A bleeding-on-warfarin report also lists the
+patient's statin, their metformin and their eye drops. Counting those as if
+someone had implicated them inflates every denominator and manufactures signals
+for whatever older people happen to take. We count **PS only**.
+
+**`PROD_AI`, not `DRUGNAME`.** `DRUGNAME` is whatever the reporter typed;
+`PROD_AI` is curated. The ingredient dictionary is built *from* the data
+(`faers_ingredients`), and `lookup.resolve_ingredient()` maps what a patient
+says ("warfarin", "my Coumadin") onto the salt form FAERS uses ("warfarin
+sodium"). Skip that and every real lookup misses while nothing looks broken.
+
+**Shrinkage.** A drug with three reports, all of one event, produces a
+spectacular ratio that means nothing. Every estimate gets a Gamma-Poisson
+posterior mean, `(a + 0.5) / (E + 0.5)`, so a thin cell collapses toward 1 while
+a cell with thousands barely moves. The shrunk figure is what the card quotes,
+and a card needs both an interval excluding 1 **and** a shrunk estimate above
+1.5 before a clinician sees it.
 
 **A disproportionality signal is not a risk.** ROR says an event is *reported*
 more often with this drug than with others. It is not an incidence, it does not

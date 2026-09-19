@@ -128,3 +128,9 @@ def load(paths: list[str], min_n: int = 30) -> int:
         return rows
     finally:
         con.close()
+        # Anything already running is holding cached Nones from before
+        # this load. Without this the app keeps serving mock cards until
+        # it is restarted, and nothing looks broken.
+        from .lookup import clear_cache
+
+        clear_cache()

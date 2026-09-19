@@ -5,23 +5,37 @@ Free, no credentialing.
 
     https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html
 
-Three things everyone gets wrong with FAERS, and what we do about them:
+Five things everyone gets wrong with FAERS, and what we do about them:
 
 1. **Duplicates.** The same case is re-reported across quarters as it is
    followed up. The FDA's own instruction is to keep, for each CASEID, the row
    with the highest FDA_DT, breaking ties on the highest PRIMARYID. We do that
    before counting anything. Skip it and every count is inflated.
-2. **Drug names are free text.** "Coumadin", "warfarin sodium" and "WARFARIN
-   5MG" are one ingredient. We normalise through a small dictionary; a real
-   build would use RxNorm.
-3. **A disproportionality signal is not a risk.** ROR says an event is reported
+2. **Not every drug on a report is a suspect.** Each DRUG row carries ROLE_COD:
+   PS (primary suspect), SS (secondary suspect), C (concomitant) or I
+   (interacting). A report of bleeding on warfarin also lists the patient's
+   statin, their metformin and their eye drops. Counting those as if someone
+   had implicated them inflates every denominator and invents signals for
+   whatever old people happen to take. We count **PS only**.
+3. **Use PROD_AI, not DRUGNAME.** DRUGNAME is whatever the reporter typed
+   ("COUMADIN", "warfarin sodium", "WARFARIN 5MG"). PROD_AI is the curated
+   active ingredient. It exists from **2014 Q3 onward**, which is exactly why
+   that is the earliest quarter worth loading.
+4. **Thin cells lie.** A drug with three reports, all of one event, produces a
+   spectacular ratio that means nothing. We shrink every estimate toward the
+   null with a Gamma-Poisson prior, so small cells have to earn their signal.
+5. **A disproportionality signal is not a risk.** ROR says an event is reported
    more often with this drug than with others. It is not an incidence, it does
-   not establish cause, and reporting is biased by publicity. The UI must say
-   "reported more often with", never "causes". Our card text does.
+   not establish cause, and reporting is biased by publicity and litigation.
+   The UI must say "reported more often with", never "causes". Our card text
+   does.
 
-What we build: `faers_signals` (ingredient x event, with ROR, PRR and a 95%
-interval) and `faers_pair_signals` (two ingredients taken together), restricted
-to reports in older adults where age is given.
+What we build, all restricted to primary-suspect drugs on reports from adults
+65+ where an age is given:
+
+    faers_ingredients    the ingredient dictionary, built FROM the data
+    faers_signals        ingredient x event: ROR, PRR, shrunk EB estimate, CI
+    faers_pair_signals   two ingredients co-reported with the same event
 
 Usage:
     python -m app.datasets.cli faers data/raw/faers/2024q1 data/raw/faers/2024q2
@@ -35,8 +49,11 @@ from .warehouse import SENIOR_AGE_MIN, connect
 
 log = logging.getLogger(__name__)
 
-# Ingredient normalisation. Brand -> ingredient, lowercase. Small on purpose:
-# these are the medicines our demo patients take plus the usual senior suspects.
+# Brand -> ingredient, for normalising what a PATIENT says or photographs.
+# FAERS rows no longer go through this (they use PROD_AI, which is already
+# curated); this dictionary exists to turn "my Coumadin" from a voice check-in
+# into the ingredient the signal table is keyed on. `faers_ingredients`, built
+# from the data, is the authority for what ingredients exist at all.
 INGREDIENT_ALIASES: dict[str, str] = {
     "coumadin": "warfarin", "jantoven": "warfarin", "warfarin sodium": "warfarin",
     "eliquis": "apixaban", "xarelto": "rivaroxaban", "plavix": "clopidogrel",
@@ -69,6 +86,31 @@ REACTION_TO_LABEL: dict[str, str] = {
 
 QUARTER_FILES = ("DEMO", "DRUG", "REAC")
 
+# ROLE_COD values we count. PS is the primary suspect drug -- the one the
+# reporter is pointing at. SS/C/I are secondary suspect, concomitant and
+# interacting, and including them is the single most common way to manufacture
+# a signal out of nothing.
+SUSPECT_ROLES = ("PS",)
+
+# Gamma-Poisson prior for the shrunk estimate. alpha=beta=0.5 is weak: it pulls
+# a cell with a handful of reports most of the way back to 1, and barely moves
+# one with thousands. Stated here rather than buried so it can be argued with.
+PRIOR_ALPHA = 0.5
+PRIOR_BETA = 0.5
+
+
+def _require_columns(con, view: str, needed: tuple[str, ...], hint: str) -> None:
+    present = {
+        row[0].lower()
+        for row in con.execute(f"DESCRIBE SELECT * FROM {view} LIMIT 1").fetchall()
+    }
+    missing = [c for c in needed if c.lower() not in present]
+    if missing:
+        raise ValueError(
+            f"{view} is missing {missing}. {hint} Columns present: "
+            f"{sorted(present)[:20]}"
+        )
+
 
 def _quarter_tables(con, folder: pathlib.Path) -> None:
     """Register DEMO/DRUG/REAC for one quarter folder as views."""
@@ -87,18 +129,26 @@ def _quarter_tables(con, folder: pathlib.Path) -> None:
             f"all_varchar=true)"
         )
 
+    _require_columns(
+        con, "drug_raw", ("primaryid", "drug_seq", "role_cod", "prod_ai"),
+        "PROD_AI exists only from 2014 Q3 onward -- load that quarter or later.",
+    )
+    _require_columns(con, "demo_raw", ("primaryid", "caseid", "fda_dt", "age"), "")
+    _require_columns(con, "reac_raw", ("primaryid", "pt"), "")
 
-def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
+
+def load(
+    folders: list[str], min_reports: int = 20, pair_top_k: int = 150
+) -> dict[str, int]:
     con = connect()
     try:
         con.execute("CREATE OR REPLACE TABLE faers_demo_all (caseid VARCHAR, primaryid VARCHAR, fda_dt VARCHAR, age_years DOUBLE)")
-        con.execute("CREATE OR REPLACE TABLE faers_drug_all (primaryid VARCHAR, ingredient VARCHAR)")
+        con.execute(
+            "CREATE OR REPLACE TABLE faers_drug_all "
+            "(primaryid VARCHAR, drug_seq VARCHAR, ingredient VARCHAR, role_cod VARCHAR)"
+        )
         con.execute("CREATE OR REPLACE TABLE faers_reac_all (primaryid VARCHAR, event VARCHAR)")
 
-        alias_case = " ".join(
-            f"WHEN lower(trim(drugname)) LIKE '%{brand}%' THEN '{ing}'"
-            for brand, ing in INGREDIENT_ALIASES.items()
-        )
         reaction_case = " ".join(
             f"WHEN lower(trim(pt)) = '{term}' THEN '{label}'"
             for term, label in REACTION_TO_LABEL.items()
@@ -121,13 +171,21 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
                 FROM demo_raw
                 """
             )
+            roles = "', '".join(SUSPECT_ROLES)
             con.execute(
                 f"""
                 INSERT INTO faers_drug_all
                 SELECT primaryid,
-                       CASE {alias_case} ELSE lower(trim(drugname)) END AS ingredient
+                       drug_seq,
+                       -- PROD_AI lists combination products with a backslash
+                       -- ("AMLODIPINE\\VALSARTAN"); the first is the one the
+                       -- report is about often enough to be the useful default.
+                       lower(trim(split_part(prod_ai, '\\', 1))) AS ingredient,
+                       upper(trim(role_cod)) AS role_cod
                 FROM drug_raw
-                WHERE drugname IS NOT NULL
+                WHERE prod_ai IS NOT NULL
+                  AND trim(prod_ai) <> ''
+                  AND upper(trim(role_cod)) IN ('{roles}')
                 """
             )
             con.execute(
@@ -165,6 +223,19 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
             FROM faers_cases c
             JOIN faers_drug_all d USING (primaryid)
             JOIN faers_reac_all r USING (primaryid)
+            """
+        )
+
+        # The ingredient dictionary, built from the data rather than typed by
+        # hand. This is what a spoken or photographed medicine gets matched
+        # against, so it has to reflect what FAERS actually contains.
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE faers_ingredients AS
+            SELECT ingredient, count(DISTINCT primaryid) AS senior_reports
+            FROM faers_pairs
+            GROUP BY ingredient
+            ORDER BY senior_reports DESC
             """
         )
 
@@ -208,19 +279,26 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
                 -- signal vanishes -- exactly the strong signals we care about.
                 SELECT
                     ingredient, event, a, b, c, d,
-                    a + 0.5 AS ac, b + 0.5 AS bc, c + 0.5 AS cc, d + 0.5 AS dc
+                    a + 0.5 AS ac, b + 0.5 AS bc, c + 0.5 AS cc, d + 0.5 AS dc,
+                    -- Expected count under independence, for the shrunk estimate.
+                    ((a + b)::DOUBLE * (a + c)) / nullif(a + b + c + d, 0) AS expected
                 FROM cells
             ),
             stats AS (
                 SELECT
-                    ingredient, event, a AS n, b, c, d,
+                    ingredient, event, a AS n, b, c, d, expected,
                     (ac * dc) / (bc * cc)                                AS ror,
                     (ac / (ac + bc)) / (cc / (cc + dc))                  AS prr,
-                    sqrt(1/ac + 1/bc + 1/cc + 1/dc)                      AS se_log_ror
+                    sqrt(1/ac + 1/bc + 1/cc + 1/dc)                      AS se_log_ror,
+                    -- Gamma-Poisson posterior mean: (a + alpha) / (E + beta).
+                    -- A cell with 3 reports collapses toward 1; a cell with
+                    -- 3000 barely moves. This is what stops a drug that was
+                    -- mentioned twice from topping the table.
+                    (a + {PRIOR_ALPHA}) / nullif(expected + {PRIOR_BETA}, 0) AS eb_rrr
                 FROM corrected
             )
             SELECT
-                ingredient, event, n, b, c, d, ror, prr,
+                ingredient, event, n, b, c, d, expected, ror, prr, eb_rrr,
                 exp(ln(ror) - 1.96 * se_log_ror) AS ci_low,
                 exp(ln(ror) + 1.96 * se_log_ror) AS ci_high
             FROM stats
@@ -228,8 +306,18 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
             """
         )
 
-        # Pair signals: the interaction story, limited to ingredients we track.
-        tracked = "', '".join(sorted(set(INGREDIENT_ALIASES.values())))
+        # Pair signals: the interaction story. All pairs is combinatorial, so we
+        # limit to the ingredients that actually appear often in senior reports
+        # -- which is where the compute earns its keep rather than burning on
+        # pairs nobody takes.
+        top_k = [
+            row[0] for row in con.execute(
+                f"SELECT ingredient FROM faers_ingredients "
+                f"WHERE senior_reports >= {min_reports} "
+                f"ORDER BY senior_reports DESC LIMIT {pair_top_k}"
+            ).fetchall()
+        ]
+        tracked = "', '".join(top_k) if top_k else "__none__"
         con.execute(
             f"""
             CREATE OR REPLACE TABLE faers_pair_signals AS
@@ -253,6 +341,9 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
         )
 
         counts = {
+            "faers_ingredients": con.execute(
+                "SELECT count(*) FROM faers_ingredients"
+            ).fetchone()[0],
             "faers_signals": con.execute("SELECT count(*) FROM faers_signals").fetchone()[0],
             "faers_pair_signals": con.execute(
                 "SELECT count(*) FROM faers_pair_signals"
@@ -263,3 +354,9 @@ def load(folders: list[str], min_reports: int = 20) -> dict[str, int]:
         return counts
     finally:
         con.close()
+        # Anything already running is holding cached Nones from before
+        # this load. Without this the app keeps serving mock cards until
+        # it is restarted, and nothing looks broken.
+        from .lookup import clear_cache
+
+        clear_cache()

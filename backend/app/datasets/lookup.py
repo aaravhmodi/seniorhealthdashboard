@@ -25,7 +25,7 @@ def available() -> dict[str, bool]:
     if not exists():
         return {name: False for name in
                 ("nhamcs_senior_rates", "neiss_senior_rates", "faers_signals",
-                 "faers_pair_signals")}
+                 "faers_pair_signals", "faers_ingredients")}
     try:
         con = connect(read_only=True)
     except Exception:
@@ -34,7 +34,7 @@ def available() -> dict[str, bool]:
         return {
             name: table_exists(con, name)
             for name in ("nhamcs_senior_rates", "neiss_senior_rates",
-                         "faers_signals", "faers_pair_signals")
+                         "faers_signals", "faers_pair_signals", "faers_ingredients")
         }
     finally:
         con.close()
@@ -90,12 +90,22 @@ def admission_rate(symptom_label: str, age: int) -> dict | None:
     }
 
 
+# What it takes for us to put a medication card in front of a clinician.
+# Both conditions, deliberately: the interval must exclude 1 (the association
+# is not noise) AND the shrunk estimate must stay meaningfully above 1 (it is
+# not a thin cell flattered by a wide interval).
+MIN_SHRUNK_RRR = 1.5
+
+
 @lru_cache(maxsize=512)
 def drug_event_signal(ingredient: str, event: str) -> dict | None:
-    """FAERS: is this event reported disproportionately with this ingredient?"""
+    """FAERS: is this event reported disproportionately with this ingredient?
+
+    Primary-suspect drugs only, ages 65+, de-duplicated by CASEID.
+    """
     rows = _query(
         """
-        SELECT n, ror, prr, ci_low, ci_high
+        SELECT n, ror, prr, eb_rrr, expected, ci_low, ci_high
         FROM faers_signals
         WHERE ingredient = ? AND event = ?
         """,
@@ -103,20 +113,74 @@ def drug_event_signal(ingredient: str, event: str) -> dict | None:
     )
     if not rows:
         return None
-    n, ror, prr, ci_low, ci_high = rows[0]
-    if ror is None:
+    n, ror, prr, eb_rrr, expected, ci_low, ci_high = rows[0]
+    if ror is None or eb_rrr is None:
         return None
     return {
         "n": int(n),
         "ror": round(float(ror), 2),
         "prr": round(float(prr), 2) if prr else None,
+        # The shrunk estimate is the one to quote: a Gamma-Poisson posterior
+        # mean that pulls small cells back toward "no signal".
+        "eb_rrr": round(float(eb_rrr), 2),
+        "expected": round(float(expected), 1) if expected else None,
         "ci_low": round(float(ci_low), 2) if ci_low else None,
         "ci_high": round(float(ci_high), 2) if ci_high else None,
-        # A signal whose interval crosses 1 is not a signal. The caller should
-        # not render it as one.
-        "significant": bool(ci_low and float(ci_low) > 1.0),
-        "source": "FAERS, ages 65+, de-duplicated by CASEID",
+        "significant": bool(
+            ci_low and float(ci_low) > 1.0 and float(eb_rrr) >= MIN_SHRUNK_RRR
+        ),
+        "source": "FAERS primary-suspect reports, ages 65+, de-duplicated by CASEID",
     }
+
+
+@lru_cache(maxsize=1)
+def known_ingredients() -> tuple[str, ...]:
+    """The ingredient dictionary, built from the data.
+
+    Used to check whether a spoken or photographed medicine is something we
+    can actually say anything about.
+    """
+    return tuple(row[0] for row in _query(
+        "SELECT ingredient FROM faers_ingredients ORDER BY senior_reports DESC", []
+    ))
+
+
+@lru_cache(maxsize=512)
+def resolve_ingredient(spoken: str) -> str | None:
+    """Map what a patient says to the ingredient FAERS is keyed on.
+
+    PROD_AI carries the salt: "WARFARIN SODIUM", "AMLODIPINE BESYLATE",
+    "LEVOTHYROXINE SODIUM". A patient says "warfarin", and their med list says
+    "Warfarin". Without this, every real lookup would miss and the medication
+    cards would silently never appear -- the failure mode being that nothing
+    looks broken.
+
+    Resolution order: the brand dictionary, then an exact match, then the most
+    reported ingredient that starts with what they said.
+    """
+    if not spoken:
+        return None
+    name = spoken.strip().lower()
+
+    from .faers import INGREDIENT_ALIASES
+
+    name = INGREDIENT_ALIASES.get(name, name)
+
+    known = known_ingredients()
+    if not known:
+        return name  # nothing loaded; hand it back for the mock path
+    if name in known:
+        return name
+
+    # known_ingredients() is ordered by report count, so the first prefix match
+    # is the salt form that actually dominates the data.
+    for candidate in known:
+        if candidate.startswith(name + " ") or candidate == name:
+            return candidate
+    for candidate in known:
+        if name in candidate.split():
+            return candidate
+    return None
 
 
 @lru_cache(maxsize=512)
@@ -166,5 +230,6 @@ def fall_admission_rate(on_anticoagulant: bool, body_part: str = "head") -> dict
 
 def clear_cache() -> None:
     """Call after running a loader, or the process keeps serving the old None."""
-    for fn in (admission_rate, drug_event_signal, drug_pair_signal, fall_admission_rate):
+    for fn in (admission_rate, drug_event_signal, drug_pair_signal,
+               fall_admission_rate, known_ingredients, resolve_ingredient):
         fn.cache_clear()

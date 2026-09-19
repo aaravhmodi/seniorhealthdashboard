@@ -145,8 +145,12 @@ def neiss_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
 
 def faers_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
     labels = {s.label for s in checkin.symptoms}
+    # Resolve each medicine to the ingredient FAERS is actually keyed on
+    # ("warfarin" -> "warfarin sodium"). Falls back to what the patient said
+    # when the warehouse is empty, which keeps the mock path working.
     ingredients = {
-        (m.ingredient or m.name).lower() for m in senior.medications
+        lookup.resolve_ingredient(m.ingredient or m.name) or (m.ingredient or m.name).lower()
+        for m in senior.medications
     }
     cards: list[EvidenceCard] = []
 
@@ -162,14 +166,16 @@ def faers_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
                         kind=EvidenceKind.FAERS,
                         title=f"{ing.title()} is reported with {label}",
                         detail=(
-                            f"Reported {real['ror']:.1f}x more often with this medicine "
-                            f"than with others (95% CI {real['ci_low']:.1f}-"
-                            f"{real['ci_high']:.1f}, {real['n']:,} reports). This is a "
-                            f"reporting pattern, not proof of cause. Worth a "
-                            f"medication review."
+                            f"Reported {real['eb_rrr']:.1f}x more often than expected "
+                            f"when this medicine is the suspected cause "
+                            f"({real['n']:,} reports, 95% CI {real['ci_low']:.1f}-"
+                            f"{real['ci_high']:.1f}). This is a reporting pattern, not "
+                            f"proof of cause. Worth a medication review."
                         ),
                         stat=Stat(
-                            value=real["ror"], unit="ratio", n=real["n"],
+                            # The shrunk estimate, not the raw ratio: it is the
+                            # one that survives a thin cell.
+                            value=real["eb_rrr"], unit="ratio", n=real["n"],
                             ci_low=real["ci_low"], ci_high=real["ci_high"],
                         ),
                         source=real["source"],
