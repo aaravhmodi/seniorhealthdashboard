@@ -114,8 +114,17 @@ def _require_columns(con, view: str, needed: tuple[str, ...], hint: str) -> None
 
 def _quarter_tables(con, folder: pathlib.Path) -> None:
     """Register DEMO/DRUG/REAC for one quarter folder as views."""
+    # The FDA zip unpacks into ASCII/ -- accept the quarter folder or that.
+    if not any(folder.glob("*.txt")) and (folder / "ASCII").is_dir():
+        folder = folder / "ASCII"
     for kind in QUARTER_FILES:
-        matches = sorted(folder.glob(f"{kind}*.txt")) + sorted(folder.glob(f"{kind.lower()}*.txt"))
+        # Case-insensitive, and each file once: on Windows "DEMO*" and "demo*"
+        # match the same file, and globbing both read every row twice.
+        matches = sorted({
+            p.resolve()
+            for p in folder.glob("*.txt")
+            if p.name.upper().startswith(kind) and p.name.upper().endswith(".TXT")
+        })
         if not matches:
             raise FileNotFoundError(
                 f"no {kind}*.txt in {folder}. Unzip the FAERS ASCII quarter so "

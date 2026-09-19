@@ -288,7 +288,11 @@ SYMPTOM_TO_RFV: dict[str, tuple[str, ...]] = {
     "chest pain": ("1050",),                        # Chest pain and related symptoms
     "shortness of breath": ("1415", "1420"),        # Shortness of breath; labored breathing
     "dizziness": ("1225",),                         # Vertigo - dizziness
-    "confusion": ("5842", "1215"),                  # Altered consciousness; memory disturbance
+    # 1240 "Other symptoms referable to the nervous system" lists Confusion and
+    # Cognitive decline in the 2022 codebook (p.116). It also takes pinched
+    # nerves and neuralgia -- noise we accept, because the direct codes alone
+    # (5842, 1215) are a dozen senior visits across five years.
+    "confusion": ("1240", "5842", "1215"),          # + altered consciousness; memory
     "weakness one side": ("1230",),                 # Weakness (neurologic)
     "fever": ("1010",),                             # Fever
     "nausea": ("1525", "1530"),                     # Nausea; vomiting
