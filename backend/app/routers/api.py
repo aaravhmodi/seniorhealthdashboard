@@ -558,6 +558,20 @@ def demo_guidelines() -> list[dict]:
     ]
 
 
+@router.get("/datasets/status", tags=["datasets"])
+def datasets_status() -> dict:
+    """Which real tables are loaded, and therefore which cards are real.
+
+    The UI shows a mock badge for any evidence whose source starts with MOCK;
+    this endpoint is how the pitch slide states what is actually behind the
+    numbers.
+    """
+    from ..datasets.lookup import available
+    from ..datasets.warehouse import status
+
+    return {"warehouse": status(), "tables_available": available()}
+
+
 @router.get("/events/recent", response_model=list[WSEvent], tags=["events"])
 def recent_events(limit: int = Query(default=25, ge=1, le=200)) -> list[WSEvent]:
     """Polling fallback, for when the WebSocket is inconvenient (or on stage)."""

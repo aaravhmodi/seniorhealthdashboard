@@ -1,15 +1,20 @@
 """Evidence cards.
 
-IMPORTANT: every number produced here is a PLACEHOLDER. The `source` string on
-each card says so, and the UI should render the mock badge whenever a source
-starts with "MOCK". Do not put these figures in the pitch deck -- Sprint 2
-replaces this module with real NEISS / FAERS lookups behind the same functions:
+Real numbers when the warehouse is loaded, placeholders when it is not, and the
+`source` string always says which. The UI renders a mock badge for any source
+beginning with "MOCK", and only non-mock figures may appear in the deck.
 
-    neiss_cards(checkin, senior)  -> list[EvidenceCard]
-    faers_cards(checkin, senior)  -> list[EvidenceCard]
-    baseline_cards(baseline, checkin) -> list[EvidenceCard]
+The swap is automatic: each builder asks `datasets.lookup` first and falls back
+to its placeholder when that returns None. Run the loaders (see docs/DATA.md)
+and the cards change under the running app -- no code change, no redeploy.
+
+    neiss_cards(checkin, senior)       -> injury/fall outcomes  (NEISS)
+    faers_cards(checkin, senior)       -> medication signals    (FAERS)
+    baseline_cards(baseline, checkin)  -> this patient's own trend
 """
 from __future__ import annotations
+
+from .datasets import lookup
 
 from .schemas import (
     BaselineSummary,
@@ -21,6 +26,9 @@ from .schemas import (
 )
 
 MOCK = "MOCK placeholder -- replaced by the NEISS/FAERS service in Sprint 2"
+
+BLOOD_THINNERS = {"warfarin", "apixaban", "rivaroxaban", "clopidogrel",
+                  "dabigatran", "eliquis", "xarelto", "coumadin", "plavix"}
 
 # symptom -> (admit-rate %, n, ci) for a 65+ cohort. Invented, plausible shape.
 _NEISS_MOCK: dict[str, tuple[float, int, tuple[float, float]]] = {
@@ -56,26 +64,82 @@ _FAERS_PAIR_MOCK: dict[frozenset[str], tuple[str, float]] = {
 }
 
 
+def _outcome_card(sym, senior: Senior) -> EvidenceCard | None:
+    """Real cohort rate if the warehouse has one, else the placeholder."""
+    real = lookup.admission_rate(sym.label, senior.age)
+    if real:
+        return EvidenceCard(
+            kind=EvidenceKind.NEISS,
+            title=f"{sym.label.title()} in adults {real['age_band']}",
+            detail=(
+                f"In similar emergency visits, {real['rate_percent']:.0f}% ended in "
+                f"admission or transfer rather than being sent home "
+                f"({real['ci_low']:.0f}-{real['ci_high']:.0f}%, n={real['n']:,})."
+            ),
+            stat=Stat(
+                value=real["rate_percent"], unit="percent", n=real["n"],
+                ci_low=real["ci_low"], ci_high=real["ci_high"],
+            ),
+            source=real["source"],
+            source_url="https://www.cdc.gov/nchs/ahcd/",
+            weight=min(1.0, real["rate_percent"] / 60),
+        )
+
+    row = _NEISS_MOCK.get(sym.label)
+    if not row:
+        return None
+    rate, n, (lo, hi) = row
+    band = senior.age // 5 * 5
+    return EvidenceCard(
+        kind=EvidenceKind.NEISS,
+        title=f"{sym.label.title()} in adults {band}+",
+        detail=(
+            f"In similar reported visits, {rate:.0f}% ended in admission or "
+            f"transfer rather than being sent home."
+        ),
+        stat=Stat(value=rate, unit="percent", n=n, ci_low=lo, ci_high=hi),
+        source=f"{MOCK} (NEISS-shaped, {band}+)",
+        weight=min(1.0, rate / 60),
+    )
+
+
 def neiss_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
     cards: list[EvidenceCard] = []
     for sym in checkin.symptoms:
-        row = _NEISS_MOCK.get(sym.label)
-        if not row:
-            continue
-        rate, n, (lo, hi) = row
-        cards.append(
-            EvidenceCard(
-                kind=EvidenceKind.NEISS,
-                title=f"{sym.label.title()} in adults {senior.age // 5 * 5}+",
-                detail=(
-                    f"In similar reported visits, {rate:.0f}% ended in admission or "
-                    f"transfer rather than being sent home."
-                ),
-                stat=Stat(value=rate, unit="percent", n=n, ci_low=lo, ci_high=hi),
-                source=f"{MOCK} (NEISS-shaped, {senior.age // 5 * 5}+)",
-                weight=min(1.0, rate / 60),
+        card = _outcome_card(sym, senior)
+        if card:
+            cards.append(card)
+
+        # A fall is the one thing NEISS itself answers, and the anticoagulant
+        # split is the clinically interesting cut.
+        if sym.label == "fall":
+            on_thinner = any(
+                (m.ingredient or m.name).lower() in BLOOD_THINNERS
+                for m in senior.medications
             )
-        )
+            fall = lookup.fall_admission_rate(on_thinner)
+            if fall:
+                cards.append(
+                    EvidenceCard(
+                        kind=EvidenceKind.NEISS,
+                        title=(
+                            "Falls in older adults on a blood thinner"
+                            if on_thinner else "Falls in older adults"
+                        ),
+                        detail=(
+                            f"{fall['rate_percent']:.0f}% were hospitalised rather "
+                            f"than sent home ({fall['ci_low']:.0f}-"
+                            f"{fall['ci_high']:.0f}%, n={fall['n']:,})."
+                        ),
+                        stat=Stat(
+                            value=fall["rate_percent"], unit="percent", n=fall["n"],
+                            ci_low=fall["ci_low"], ci_high=fall["ci_high"],
+                        ),
+                        source=fall["source"],
+                        source_url="https://www.cpsc.gov/Research--Statistics/NEISS-Injury-Data",
+                        weight=min(1.0, fall["rate_percent"] / 60),
+                    )
+                )
     return cards[:3]
 
 
@@ -87,6 +151,36 @@ def faers_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
     cards: list[EvidenceCard] = []
 
     for ing in sorted(ingredients):
+        # Real signal first. An interval that crosses 1 is not a signal, so we
+        # do not show it -- a card that says "1.05x" teaches the clinician to
+        # ignore the cards.
+        for label in sorted(labels):
+            real = lookup.drug_event_signal(ing, label)
+            if real and real["significant"]:
+                cards.append(
+                    EvidenceCard(
+                        kind=EvidenceKind.FAERS,
+                        title=f"{ing.title()} is reported with {label}",
+                        detail=(
+                            f"Reported {real['ror']:.1f}x more often with this medicine "
+                            f"than with others (95% CI {real['ci_low']:.1f}-"
+                            f"{real['ci_high']:.1f}, {real['n']:,} reports). This is a "
+                            f"reporting pattern, not proof of cause. Worth a "
+                            f"medication review."
+                        ),
+                        stat=Stat(
+                            value=real["ror"], unit="ratio", n=real["n"],
+                            ci_low=real["ci_low"], ci_high=real["ci_high"],
+                        ),
+                        source=real["source"],
+                        source_url="https://fis.fda.gov/extensions/FPD-QDE-FAERS/FPD-QDE-FAERS.html",
+                        weight=min(1.0, (real["ror"] - 1) / 9),
+                    )
+                )
+
+        if cards:
+            continue
+
         for event, ror, n in _FAERS_MOCK.get(ing, []):
             if event in labels:
                 cards.append(
@@ -103,6 +197,32 @@ def faers_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
                         weight=min(1.0, (ror - 1) / 9),
                     )
                 )
+
+    # Real pair signals before the placeholders.
+    for a in sorted(ingredients):
+        for b in sorted(ingredients):
+            if a >= b:
+                continue
+            for label in sorted(labels):
+                real_pair = lookup.drug_pair_signal(a, b, label)
+                if real_pair:
+                    cards.append(
+                        EvidenceCard(
+                            kind=EvidenceKind.FAERS,
+                            title=f"{a.title()} + {b.title()} together",
+                            detail=(
+                                f"{real_pair['n']:,} reports mention both medicines "
+                                f"alongside {label}. Worth a pharmacist call."
+                            ),
+                            stat=Stat(value=float(real_pair["n"]), unit="count",
+                                      n=real_pair["n"]),
+                            source=real_pair["source"],
+                            weight=0.5,
+                        )
+                    )
+
+    if cards:
+        return cards[:3]
 
     for pair, (event, ror) in _FAERS_PAIR_MOCK.items():
         if pair <= ingredients and any(e in labels for e in event.split(" / ")):
