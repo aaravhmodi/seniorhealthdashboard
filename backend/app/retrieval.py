@@ -12,6 +12,9 @@ What goes in the index (four kinds, deliberately separate):
   patient_history  this senior's own check-ins, so the agent can say "you told
                    me the same thing on Tuesday" without hallucinating it
   med_info         plain-language notes about a medicine they actually take
+  similar_case     a real de-identified NEISS injury case with its outcome,
+                   so "patients who described this ended up admitted" is a
+                   retrieved fact rather than a generated one
 
 Backends: `InMemoryVectorStore` is the default and needs nothing installed --
 it is enough for the hackathon's few thousand chunks. Swap in Elastic or
@@ -33,7 +36,9 @@ import httpx
 
 from .config import get_settings
 
-ChunkKind = Literal["guideline", "cohort_stat", "patient_history", "med_info"]
+ChunkKind = Literal[
+    "guideline", "cohort_stat", "patient_history", "med_info", "similar_case"
+]
 
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 256          # hashed fallback dimension; OpenAI vectors are longer
@@ -275,6 +280,113 @@ def ingest_cohort_stats(rows: Iterable[dict]) -> int:
             )
         )
     return store.upsert(chunks)
+
+
+def ingest_neiss_narratives(rows: Iterable[dict]) -> int:
+    """Embed real senior injury cases so we can retrieve ones like this patient.
+
+    Two decisions worth knowing:
+
+    **Expansion.** The narrative is expanded from NEISS shorthand first: "80YOF
+    GLF STRUCK HEAD" embeds near nothing, while "80 year old woman ground level
+    fall struck head" embeds near what a patient actually says. That is the
+    difference between retrieval that works and retrieval that returns noise.
+
+    **Grouping.** Identical narratives are collapsed into one chunk carrying a
+    case count. NEISS shorthand repeats heavily -- one sentence can be thousands
+    of real cases -- and indexing each separately means the top-k is thirty
+    copies of the same line while genuinely different cases never surface. The
+    count is not lost: it rides in metadata and weights the outcome share.
+
+    The outcome is deliberately kept out of the embedded text. Otherwise
+    "admitted" pulls every query toward admitted cases and the rate we report
+    becomes circular.
+    """
+    from .datasets.narratives import expand
+
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        readable = expand(row.get("narrative"))
+        if not readable:
+            continue
+        flags = [
+            label
+            for label, present in (
+                ("struck their head", row.get("head_strike")),
+                ("lost consciousness", row.get("loss_of_consciousness")),
+                ("taking a blood thinner", row.get("on_anticoagulant")),
+            )
+            if present
+        ]
+        text = (
+            f"{readable} "
+            f"({row.get('age_band', 'older adult')}, "
+            f"mechanism: {row.get('mechanism', 'unspecified')}"
+            + (f", {', '.join(flags)}" if flags else "")
+            + ")"
+        )
+        entry = grouped.setdefault(
+            text,
+            {
+                "cases": 0,
+                "admitted_cases": 0,
+                "mechanism": row.get("mechanism"),
+                "head_strike": bool(row.get("head_strike")),
+                "on_anticoagulant": bool(row.get("on_anticoagulant")),
+                "age_band": row.get("age_band"),
+                "case_id": row["case_id"],
+            },
+        )
+        entry["cases"] += 1
+        entry["admitted_cases"] += 1 if row.get("admitted") else 0
+
+    chunks = [
+        Chunk(
+            id=f"neiss_{entry['case_id']}",
+            text=text,
+            kind="similar_case",
+            source=(
+                f"NEISS, {entry['cases']} case"
+                f"{'s' if entry['cases'] != 1 else ''} like this, "
+                f"ages {entry.get('age_band', '65+')}"
+            ),
+            metadata=entry,
+        )
+        for text, entry in grouped.items()
+    ]
+    return store.upsert(chunks)
+
+
+def similar_cases(query: str, k: int = 5) -> dict:
+    """Retrieve like cases and report how they ended.
+
+    The admitted share is over the *retrieved* cases, weighted by how many real
+    cases each group represents. That is a different and more honest number
+    than the cohort base rate: it answers "cases that read like this one", not
+    "all falls". Quote the cohort rate from the evidence card for the latter.
+    """
+    results = store.search(query, k=k, kinds=("similar_case",))
+    cases = [
+        {
+            "text": chunk.text,
+            "score": round(score, 4),
+            "source": chunk.source,
+            "cases": chunk.metadata.get("cases", 1),
+            "admitted_cases": chunk.metadata.get("admitted_cases", 0),
+            "mechanism": chunk.metadata.get("mechanism"),
+        }
+        for chunk, score in results
+    ]
+    total = sum(c["cases"] for c in cases)
+    admitted = sum(c["admitted_cases"] for c in cases)
+    return {
+        "query": query,
+        "matched": len(cases),
+        "cases_represented": total,
+        "admitted": admitted,
+        "admitted_share": round(admitted / total, 2) if total else None,
+        "cases": cases,
+    }
 
 
 def ingest_guidelines(rows: Iterable[dict]) -> int:

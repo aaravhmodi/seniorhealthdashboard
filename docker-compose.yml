@@ -1,0 +1,27 @@
+# Quickest way to get a server a teammate can hit:
+#   docker compose up --build        -> http://localhost:8000/docs
+#
+# The venv route is better for development (instant reload, no rebuild):
+#   cd backend && .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    # Keys stay on disk, never in the image or in git.
+    env_file:
+      - ./backend/.env
+    volumes:
+      # The DuckDB warehouse lives outside the container, so a rebuild does not
+      # throw away a dataset load that took twenty minutes.
+      - ./backend/data:/app/data
+    environment:
+      DUCKDB_PATH: /app/data/warehouse.duckdb
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

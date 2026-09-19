@@ -24,8 +24,8 @@ log = logging.getLogger(__name__)
 def available() -> dict[str, bool]:
     if not exists():
         return {name: False for name in
-                ("nhamcs_senior_rates", "neiss_senior_rates", "faers_signals",
-                 "faers_pair_signals", "faers_ingredients")}
+                ("nhamcs_senior_rates", "neiss_senior_rates", "neiss_narratives",
+                 "faers_signals", "faers_pair_signals", "faers_ingredients")}
     try:
         con = connect(read_only=True)
     except Exception:
@@ -34,7 +34,8 @@ def available() -> dict[str, bool]:
         return {
             name: table_exists(con, name)
             for name in ("nhamcs_senior_rates", "neiss_senior_rates",
-                         "faers_signals", "faers_pair_signals", "faers_ingredients")
+                         "neiss_narratives", "faers_signals", "faers_pair_signals",
+                         "faers_ingredients")
         }
     finally:
         con.close()
@@ -202,6 +203,86 @@ def drug_pair_signal(ingredient_a: str, ingredient_b: str, event: str) -> dict |
     }
 
 
+def narrative_rows(limit: int = 5000) -> list[dict]:
+    """The retrieval corpus: senior injury cases with their outcome.
+
+    Not cached -- it is read once at index build, and holding thousands of rows
+    in an lru_cache for the life of the process is pure waste.
+    """
+    rows = _query(
+        f"""
+        SELECT case_id, narrative, mechanism, head_strike,
+               loss_of_consciousness, on_anticoagulant, age_band, admitted
+        FROM neiss_narratives
+        LIMIT {int(limit)}
+        """,
+        [],
+    )
+    return [
+        {
+            "case_id": r[0],
+            "narrative": r[1],
+            "mechanism": r[2],
+            "head_strike": bool(r[3]),
+            "loss_of_consciousness": bool(r[4]),
+            "on_anticoagulant": bool(r[5]),
+            "age_band": r[6],
+            "admitted": bool(r[7]),
+        }
+        for r in rows
+    ]
+
+
+@lru_cache(maxsize=512)
+def fall_outcome(
+    mechanism: str | None = None,
+    head_strike: bool | None = None,
+    on_anticoagulant: bool | None = None,
+    age_band: str | None = None,
+) -> dict | None:
+    """Hospitalisation rate for the cut that matches this patient.
+
+    Every argument is optional, so the caller can ask the most specific
+    question the narrative supports and let the rest aggregate away.
+    """
+    clauses, params = [], []
+    for column, value in (
+        ("mechanism", mechanism),
+        ("head_strike", head_strike),
+        ("on_anticoagulant", on_anticoagulant),
+        ("age_band", age_band),
+    ):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    rows = _query(
+        f"""
+        SELECT sum(n)                            AS n,
+               sum(rate * n) / nullif(sum(n), 0) AS rate,
+               min(ci_low), max(ci_high)
+        FROM neiss_senior_rates
+        {where}
+        """,
+        params,
+    )
+    if not rows or not rows[0][0]:
+        return None
+    n, rate, ci_low, ci_high = rows[0]
+    return {
+        "n": int(n),
+        "rate_percent": round(float(rate) * 100, 1),
+        "ci_low": round(float(ci_low) * 100, 1),
+        "ci_high": round(float(ci_high) * 100, 1),
+        "mechanism": mechanism,
+        "head_strike": head_strike,
+        "on_anticoagulant": on_anticoagulant,
+        "age_band": age_band,
+        "source": "NEISS injury surveillance, ages 65+",
+    }
+
+
 @lru_cache(maxsize=256)
 def fall_admission_rate(on_anticoagulant: bool, body_part: str = "head") -> dict | None:
     """NEISS: hospitalisation rate after a fall, split by anticoagulant mention."""
@@ -231,5 +312,6 @@ def fall_admission_rate(on_anticoagulant: bool, body_part: str = "head") -> dict
 def clear_cache() -> None:
     """Call after running a loader, or the process keeps serving the old None."""
     for fn in (admission_rate, drug_event_signal, drug_pair_signal,
-               fall_admission_rate, known_ingredients, resolve_ingredient):
+               fall_admission_rate, fall_outcome, known_ingredients,
+               resolve_ingredient):
         fn.cache_clear()

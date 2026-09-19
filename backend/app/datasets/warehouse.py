@@ -26,6 +26,7 @@ from ..config import get_settings
 TABLES = (
     "nhamcs_senior_rates",
     "neiss_senior_rates",
+    "neiss_narratives",
     "faers_ingredients",
     "faers_signals",
     "faers_pair_signals",

@@ -64,6 +64,20 @@ _FAERS_PAIR_MOCK: dict[frozenset[str], tuple[str, float]] = {
 }
 
 
+def _fall_title(on_thinner: bool, fall: dict) -> str:
+    """Name the cut the number actually came from, so nobody over-reads it."""
+    parts = ["Falls"]
+    if fall.get("head_strike"):
+        parts.append("with a head strike")
+    if on_thinner:
+        parts.append("on a blood thinner")
+    if fall.get("age_band"):
+        parts.append(f"in adults {fall['age_band']}")
+    else:
+        parts.append("in older adults")
+    return " ".join(parts)
+
+
 def _outcome_card(sym, senior: Senior) -> EvidenceCard | None:
     """Real cohort rate if the warehouse has one, else the placeholder."""
     real = lookup.admission_rate(sym.label, senior.age)
@@ -110,22 +124,37 @@ def neiss_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
         if card:
             cards.append(card)
 
-        # A fall is the one thing NEISS itself answers, and the anticoagulant
-        # split is the clinically interesting cut.
+        # A fall is the one thing NEISS itself answers, and the cuts the
+        # narrative makes possible -- mechanism, head strike, anticoagulant --
+        # are what turn a generic rate into this patient's rate.
         if sym.label == "fall":
             on_thinner = any(
                 (m.ingredient or m.name).lower() in BLOOD_THINNERS
                 for m in senior.medications
             )
-            fall = lookup.fall_admission_rate(on_thinner)
+            from .datasets.narratives import features as narrative_features
+
+            spoken = narrative_features(checkin.raw_text)
+            band = "85+" if senior.age >= 85 else "75-84" if senior.age >= 75 else "65-74"
+
+            # Most specific cut first; fall back to broader ones until a cell
+            # has enough cases to quote.
+            fall = (
+                lookup.fall_outcome(
+                    head_strike=spoken["head_strike"],
+                    on_anticoagulant=on_thinner,
+                    age_band=band,
+                )
+                or lookup.fall_outcome(
+                    head_strike=spoken["head_strike"], on_anticoagulant=on_thinner
+                )
+                or lookup.fall_admission_rate(on_thinner)
+            )
             if fall:
                 cards.append(
                     EvidenceCard(
                         kind=EvidenceKind.NEISS,
-                        title=(
-                            "Falls in older adults on a blood thinner"
-                            if on_thinner else "Falls in older adults"
-                        ),
+                        title=_fall_title(on_thinner, fall),
                         detail=(
                             f"{fall['rate_percent']:.0f}% were hospitalised rather "
                             f"than sent home ({fall['ci_low']:.0f}-"

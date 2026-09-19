@@ -606,7 +606,19 @@ def retrieval_reindex() -> dict:
         total += retrieval.ingest_medications(senior)
         total += retrieval.ingest_patient_history(senior, store.checkins_for(senior.id))
     total += retrieval.ingest_guidelines(demo_guidelines())
-    return {"indexed_chunks": total, "embedder": type(retrieval.store.embedder).__name__}
+
+    # Real NEISS cases, when the warehouse has them. Silently zero otherwise,
+    # which is the same degradation story as the evidence cards.
+    from ..datasets.lookup import narrative_rows
+
+    cases = retrieval.ingest_neiss_narratives(narrative_rows())
+    total += cases
+
+    return {
+        "indexed_chunks": total,
+        "neiss_cases": cases,
+        "embedder": type(retrieval.store.embedder).__name__,
+    }
 
 
 def demo_guidelines() -> list[dict]:
@@ -646,6 +658,20 @@ def demo_guidelines() -> list[dict]:
             "source": "hand-written demo guideline (replace with a real source)",
         },
     ]
+
+
+@router.get("/evidence/similar-cases", tags=["evidence"])
+def evidence_similar_cases(
+    text: str,
+    k: int = Query(default=5, ge=1, le=20),
+) -> dict:
+    """Real injury cases that read like this one, and how they ended.
+
+    Empty until the NEISS loader has run and the index has been rebuilt. The
+    admitted share is over the retrieved set, not a cohort rate -- quote
+    `/datasets/status` cohort numbers for that.
+    """
+    return retrieval.similar_cases(text, k=k)
 
 
 @router.get("/datasets/status", tags=["datasets"])
