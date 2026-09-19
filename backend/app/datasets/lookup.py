@@ -233,6 +233,72 @@ def narrative_rows(limit: int = 5000) -> list[dict]:
     ]
 
 
+def cohort_rows(limit: int = 2000) -> list[dict]:
+    """Citable warehouse statistics for the retrieval index.
+
+    Only FAERS cells that pass the same significance and shrinkage guard used
+    by evidence cards are exposed. Every returned row includes its sample size.
+    """
+    rows: list[dict] = []
+    faers = _query(
+        f"""
+        SELECT ingredient, event, n, eb_rrr, ci_low, ci_high
+        FROM faers_signals
+        WHERE ci_low > 1 AND eb_rrr >= {MIN_SHRUNK_RRR}
+        ORDER BY n DESC
+        LIMIT {int(limit)}
+        """,
+        [],
+    )
+    for ingredient, event, n, estimate, ci_low, ci_high in faers:
+        rows.append(
+            {
+                "id": f"faers_{ingredient}_{event}",
+                "text": (
+                    f"Among FAERS reports for adults 65 and older, {event} was "
+                    f"reported more often with primary-suspect {ingredient}: "
+                    f"shrunk reporting ratio {float(estimate):.2f} "
+                    f"(95% interval {float(ci_low):.2f}-{float(ci_high):.2f}; "
+                    f"{int(n)} reports). This is an association, not proof of cause."
+                ),
+                "source": "FDA FAERS, primary-suspect reports, ages 65+",
+                "n": int(n),
+                "kind": "faers",
+            }
+        )
+
+    remaining = max(0, int(limit) - len(rows))
+    if remaining:
+        neiss = _query(
+            f"""
+            SELECT mechanism, head_strike, on_anticoagulant, age_band,
+                   n, rate, ci_low, ci_high
+            FROM neiss_senior_rates
+            ORDER BY n DESC
+            LIMIT {remaining}
+            """,
+            [],
+        )
+        for mechanism, head, anticoag, age_band, n, rate, lo, hi in neiss:
+            rows.append(
+                {
+                    "id": f"neiss_{mechanism}_{head}_{anticoag}_{age_band}",
+                    "text": (
+                        f"In CPSC NEISS injury cases for ages {age_band}, "
+                        f"{float(rate) * 100:.1f}% were admitted or observed "
+                        f"(95% interval {float(lo) * 100:.1f}-{float(hi) * 100:.1f}%; "
+                        f"{int(n)} sampled cases). Mechanism: {mechanism}; "
+                        f"head strike: {bool(head)}; blood thinner mentioned: "
+                        f"{bool(anticoag)}."
+                    ),
+                    "source": "CPSC NEISS injury surveillance, ages 65+",
+                    "n": int(n),
+                    "kind": "neiss",
+                }
+            )
+    return rows
+
+
 @lru_cache(maxsize=512)
 def fall_outcome(
     mechanism: str | None = None,

@@ -44,6 +44,7 @@ rung. Nothing lowers a rule's floor.
 | POST | `/voice/speak` | `audio/wav` | 409 where the language has no voice |
 | GET | `/retrieval/search?q=&senior_id=&k=` | scored chunks | inspect what the model is given |
 | POST | `/retrieval/reindex` | `{indexed_chunks}` | rebuild the vector index |
+| POST | `/questions/answer` | grounded answer + citations | optional `senior_id` scopes private history |
 | GET | `/datasets/status` | warehouse + table availability | which cards are real vs MOCK |
 | POST | `/webhooks/linq` | `{ok, senior_id, ...}` | backend only, signature-checked off mock |
 | POST | `/demo/reset` | `Health` | re-seeds; safe to call between demo runs |

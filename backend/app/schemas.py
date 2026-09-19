@@ -209,6 +209,21 @@ class CheckInResponse(BaseModel):
     notifications: list[NotificationReceipt] = []
 
 
+class SeniorQuestion(BaseModel):
+    """A grounded question about older-adult health or one seeded senior."""
+
+    question: str = Field(min_length=3, max_length=1000)
+    senior_id: Optional[str] = None
+    language: str = "en"
+
+
+class SeniorAnswer(BaseModel):
+    answer: str
+    citations: list[str] = []
+    used_model: bool = False
+    fallback_reason: Optional[str] = None
+
+
 # --------------------------------------------------------------------------
 # Timeline and events
 # --------------------------------------------------------------------------

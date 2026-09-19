@@ -39,6 +39,8 @@ from ..schemas import (
     LinqInbound,
     Medication,
     Senior,
+    SeniorAnswer,
+    SeniorQuestion,
     Timeline,
     TimelineEntry,
     WSEvent,
@@ -597,6 +599,28 @@ def retrieval_search(
     }
 
 
+@router.post("/questions/answer", response_model=SeniorAnswer, tags=["retrieval"])
+def answer_question(payload: SeniorQuestion) -> SeniorAnswer:
+    """Grounded Q&A over senior history, medicines, and loaded datasets."""
+    if payload.senior_id:
+        _get_senior(payload.senior_id)
+    context = retrieval.build_context(
+        payload.question,
+        senior_id=payload.senior_id,
+        language=payload.language,
+        k=5,
+    )
+    result = llm.answer_senior_question(
+        payload.question, context, language=payload.language
+    )
+    return SeniorAnswer(
+        answer=str(result.value),
+        citations=context.citations,
+        used_model=result.used_model,
+        fallback_reason=result.fallback_reason,
+    )
+
+
 @router.post("/retrieval/reindex", tags=["retrieval"])
 def retrieval_reindex() -> dict:
     """Rebuild the index from whatever is in the store. Cheap; run it freely."""
@@ -609,14 +633,17 @@ def retrieval_reindex() -> dict:
 
     # Real NEISS cases, when the warehouse has them. Silently zero otherwise,
     # which is the same degradation story as the evidence cards.
-    from ..datasets.lookup import narrative_rows
+    from ..datasets.lookup import cohort_rows, narrative_rows
 
     cases = retrieval.ingest_neiss_narratives(narrative_rows())
     total += cases
+    stats = retrieval.ingest_cohort_stats(cohort_rows())
+    total += stats
 
     return {
         "indexed_chunks": total,
         "neiss_cases": cases,
+        "cohort_stats": stats,
         "embedder": type(retrieval.store.embedder).__name__,
     }
 

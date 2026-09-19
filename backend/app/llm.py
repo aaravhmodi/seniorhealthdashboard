@@ -180,6 +180,51 @@ def extract_vitals_and_meds(text: str | None, language: str = "en") -> dict:
         return {}
 
 
+def answer_senior_question(
+    question: str, context: RetrievedContext, language: str = "en"
+) -> LLMResult:
+    """Answer only from retrieved records; never make a triage decision.
+
+    Without an API key the retrieved passages themselves remain a useful,
+    cited extractive answer. This keeps the Docker demo functional offline.
+    """
+    if context.is_empty():
+        return LLMResult(
+            "I do not have enough sourced information to answer that question.",
+            used_model=False,
+            fallback_reason="no context",
+        )
+
+    fallback = "\n\n".join(chunk.text for chunk in context.chunks[:3])
+    if not is_enabled():
+        return LLMResult(fallback, used_model=False, fallback_reason="no api key")
+
+    raw = _chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "Answer questions about older adults using only the supplied "
+                    "context. Do not diagnose, invent statistics, or choose an "
+                    "action-ladder level. If the context is insufficient, say so. "
+                    "Use plain respectful language and cite claims as [1], [2]."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Reply in {LANGUAGE_NAMES.get(language, 'English')}.\n"
+                    f"Question: {question}\n\nContext:\n{context.as_prompt_block()}"
+                ),
+            },
+        ],
+        max_tokens=350,
+    )
+    if not raw:
+        return LLMResult(fallback, used_model=False, fallback_reason="call failed")
+    return LLMResult(raw.strip(), used_model=True)
+
+
 # --------------------------------------------------------------------------
 # Explanation
 # --------------------------------------------------------------------------

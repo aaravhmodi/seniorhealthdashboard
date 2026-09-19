@@ -15,13 +15,19 @@ from app.config import get_settings
 
 
 @pytest.fixture(autouse=True)
-def deterministic_settings(monkeypatch):
+def deterministic_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "")
     monkeypatch.setenv("MOCK_MODE", "true")
+    # A developer may have loaded the real warehouse under backend/data.
+    # Tests must never change behavior based on that local, mutable state.
+    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "empty.duckdb"))
     get_settings.cache_clear()
+    from app.datasets.lookup import clear_cache
+    clear_cache()
     yield
     get_settings.cache_clear()
+    clear_cache()
 
 
 @pytest.fixture(autouse=True)

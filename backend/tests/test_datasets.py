@@ -437,3 +437,24 @@ def test_the_medication_card_appears_for_a_real_patient_med_list(warehouse_at, t
     assert cards, "a real signal for a med the patient takes must surface"
     assert not cards[0].source.startswith("MOCK")
     assert "Warfarin Sodium" in cards[0].title
+
+
+def test_significant_faers_rows_are_available_to_retrieval(warehouse_at, tmp_path):
+    demo, drug, reac = [], [], []
+    for i in range(60):
+        pid = str(11000 + i)
+        demo.append((pid, pid, "20240101", "78"))
+        drug.append(ps(pid, "COUMADIN", "WARFARIN SODIUM"))
+        reac.append((pid, "Haemorrhage"))
+    for i in range(60):
+        pid = str(12000 + i)
+        demo.append((pid, pid, "20240101", "78"))
+        drug.append(ps(pid, "SYNTHROID", "LEVOTHYROXINE SODIUM"))
+        reac.append((pid, "Nausea"))
+    faers.load([write_faers_quarter(tmp_path, demo, drug, reac)], min_reports=10)
+
+    rows = lookup.cohort_rows()
+    warfarin = next(row for row in rows if "warfarin" in row["text"])
+    assert warfarin["n"] == 60
+    assert "association, not proof of cause" in warfarin["text"]
+    assert warfarin["source"].startswith("FDA FAERS")

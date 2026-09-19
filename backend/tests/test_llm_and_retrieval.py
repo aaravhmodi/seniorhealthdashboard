@@ -259,6 +259,46 @@ def test_empty_index_degrades_quietly():
     assert context.as_prompt_block() == "(no context retrieved)"
 
 
+def test_senior_questions_have_a_cited_offline_answer(client):
+    response = client.post(
+        "/questions/answer",
+        json={
+            "question": "Why is a head strike risky with a blood thinner?",
+            "senior_id": "sen_chen",
+            "language": "en",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "blood thinner" in body["answer"].lower()
+    assert body["citations"]
+    assert body["used_model"] is False
+    assert body["fallback_reason"] == "no api key"
+
+
+def test_senior_questions_reject_an_unknown_patient(client):
+    response = client.post(
+        "/questions/answer",
+        json={"question": "What changed?", "senior_id": "sen_missing"},
+    )
+    assert response.status_code == 404
+
+
+def test_senior_question_model_only_sees_retrieved_context(
+    client, with_key, monkeypatch
+):
+    calls = fake_chat(monkeypatch, "A fall while taking a blood thinner needs care [1].")
+    response = client.post(
+        "/questions/answer",
+        json={"question": "What should I know about falls?", "senior_id": "sen_chen"},
+    )
+    assert response.status_code == 200
+    assert response.json()["used_model"] is True
+    prompt = calls[0]["messages"][1]["content"]
+    assert "Context:" in prompt
+    assert "source:" in prompt
+
+
 # -- voice agent config ----------------------------------------------------
 def test_voice_agent_config_is_tuned_for_older_speakers(client):
     config = client.get("/voice/agent-config/sen_rosa").json()
