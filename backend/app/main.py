@@ -29,6 +29,8 @@ Everything the UI touches -- paths, field names, enums, event types -- is real.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed(store)
+    # Index on boot so the first voice session already has context.
+    api.retrieval_reindex()
     yield
 
 

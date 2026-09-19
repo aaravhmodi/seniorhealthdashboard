@@ -10,6 +10,7 @@ from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
+from .. import llm, retrieval
 from ..ladder import evaluate
 from ..notify import notify_caregivers
 from ..schemas import (
@@ -114,6 +115,10 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
         )
 
     language = payload.language or senior.preferred_language
+
+    # The lexicon always runs; the LLM only adds to it. See llm.extract_symptoms.
+    extraction = llm.extract_symptoms(payload.text, language)
+
     checkin = CheckIn(
         id=new_id("chk"),
         senior_id=senior.id,
@@ -122,12 +127,14 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
         language=language,
         raw_text=payload.text,
         transcript_confidence=payload.transcript_confidence,
-        symptoms=extract(payload.text, language),
+        symptoms=extraction.value,
         vitals=payload.vitals,
         meds_taken_today=payload.meds_taken_today or [],
+        extraction_model=("llm+lexicon" if extraction.used_model else "lexicon"),
         client_ref=payload.client_ref,
     )
     store.put_checkin(checkin)
+    retrieval.ingest_patient_history(senior, [checkin])
     bus.publish(
         EventType.CHECKIN_CREATED,
         senior.id,
@@ -139,6 +146,24 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
     evaluation = evaluate(
         checkin, senior, store.baseline(senior.id), previous_level=previous_level
     )
+    context = retrieval.build_context(
+        query=checkin.raw_text or "daily check-in",
+        senior_id=senior.id,
+        language=language,
+    )
+    phrased = llm.explain(
+        level=evaluation.level,
+        language=senior.preferred_language,
+        senior_name=senior.display_name,
+        flags=evaluation.red_flags,
+        evidence=evaluation.evidence,
+        template_fallback=evaluation.explanation,
+        context=context,
+    )
+    evaluation.explanation = phrased.value
+    evaluation.llm_used = phrased.used_model
+    evaluation.llm_fallback_reason = phrased.fallback_reason
+    evaluation.context_citations = context.citations
     store.put_evaluation(evaluation)
 
     store.add_timeline(
@@ -363,6 +388,7 @@ def demo_reset() -> Health:
     store.handoffs.clear()
     store.timeline.clear()
     seed(store)
+    retrieval_reindex()
     return Health(mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors))
 
 
@@ -433,6 +459,101 @@ def demo_scenarios() -> list[dict]:
             "source": "voice",
             "text": "My face is drooping and my arm is weak on one side, slurred speech.",
             "expect_level": 4,
+        },
+    ]
+
+
+# --------------------------------------------------------------------------
+# Retrieval and voice-agent wiring
+# --------------------------------------------------------------------------
+@router.get("/voice/agent-config/{senior_id}", tags=["voice"])
+def voice_agent_config(senior_id: str) -> dict:
+    """The Settings frame the client sends Deepgram to open a voice session.
+
+    Built per senior: their language, their retrieved history, our system
+    prompt, and senior-tuned endpointing. `_meta.voice_output` is false when
+    Deepgram has no voice for that language -- render text instead.
+    """
+    senior = _get_senior(senior_id)
+    return llm.voice_agent_config(senior, store.checkins_for(senior_id, 10))
+
+
+@router.get("/retrieval/search", tags=["retrieval"])
+def retrieval_search(
+    q: str,
+    senior_id: Optional[str] = None,
+    k: int = Query(default=5, ge=1, le=20),
+    language: str = "en",
+) -> dict:
+    """Inspect what the model would be given.
+
+    Invaluable when an answer looks wrong: nine times out of ten the retrieval
+    is the problem, not the prompt.
+    """
+    context = retrieval.build_context(q, senior_id=senior_id, language=language, k=k)
+    return {
+        "query": q,
+        "embedder": type(retrieval.store.embedder).__name__,
+        "indexed_chunks": len(retrieval.store.chunks),
+        "results": [
+            {
+                "score": round(score, 4),
+                "kind": chunk.kind,
+                "source": chunk.source,
+                "text": chunk.text,
+            }
+            for chunk, score in zip(context.chunks, context.scores)
+        ],
+    }
+
+
+@router.post("/retrieval/reindex", tags=["retrieval"])
+def retrieval_reindex() -> dict:
+    """Rebuild the index from whatever is in the store. Cheap; run it freely."""
+    retrieval.store.clear()
+    total = 0
+    for senior in store.list_seniors():
+        total += retrieval.ingest_medications(senior)
+        total += retrieval.ingest_patient_history(senior, store.checkins_for(senior.id))
+    total += retrieval.ingest_guidelines(demo_guidelines())
+    return {"indexed_chunks": total, "embedder": type(retrieval.store.embedder).__name__}
+
+
+def demo_guidelines() -> list[dict]:
+    """Hand-written, citable guidance chunks.
+
+    Real guideline ingestion is a Sprint 2 pipeline. These exist so the
+    retrieval path is exercised end to end from day one, and each carries a
+    source the agent can quote.
+    """
+    return [
+        {
+            "id": "fall_anticoag",
+            "text": ("An older adult who falls while taking a blood thinner should be "
+                     "assessed the same day even if they feel fine, because bleeding "
+                     "inside the head can appear hours later."),
+            "source": "hand-written demo guideline (replace with a real source)",
+        },
+        {
+            "id": "delirium_uti",
+            "text": ("Sudden confusion in an older adult is often the first and only "
+                     "sign of an infection such as a urinary tract infection, rather "
+                     "than a change in their memory."),
+            "source": "hand-written demo guideline (replace with a real source)",
+        },
+        {
+            "id": "atypical_mi",
+            "text": ("Older adults having a heart attack often have no chest pain. "
+                     "Breathlessness, nausea, sweating or sudden tiredness can be the "
+                     "only signs."),
+            "source": "hand-written demo guideline (replace with a real source)",
+        },
+        {
+            "id": "orthostatic",
+            "text": ("Dizziness on standing in an older adult taking a water pill and "
+                     "a blood pressure medicine is often a blood pressure drop, and is "
+                     "worth a medication review."),
+            "source": "hand-written demo guideline (replace with a real source)",
         },
     ]
 

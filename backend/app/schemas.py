@@ -187,6 +187,11 @@ class Evaluation(BaseModel):
     escalated_for_uncertainty: bool = False
     requires_human_review: bool = False
     engine_version: str = "mock-0"
+    # Provenance, so the UI can show when a model was involved and the tests
+    # can assert the deterministic fallback actually fired.
+    llm_used: bool = False
+    llm_fallback_reason: Optional[str] = None
+    context_citations: list[str] = []
 
 
 class NotificationReceipt(BaseModel):
