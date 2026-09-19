@@ -47,7 +47,7 @@ scripted demo inputs with their expected levels.
 | dataset pipelines | **written and tested** | run the loaders (docs/DATA.md) to replace the MOCK cards |
 | NHAMCS / NEISS / FAERS numbers | placeholder until loaded | `source` starts with `MOCK` |
 | Linq send | mocked unless `LINQ_API_KEY` set and `MOCK_MODE=false` | |
-| Deepgram | config endpoint ready; `audio_url` returns 501 | streaming is the next piece |
+| Deepgram | **real** | speech in and out, verified by a live round trip; streaming is the next piece |
 | storage | in memory, behind a `Store` interface | swap to DuckDB/Postgres |
 
 ## Languages
@@ -57,9 +57,15 @@ explanations. Parity is tested: the same complaint must reach the same rung in
 English, Spanish and French, because the clinical answer cannot depend on which
 language you speak.
 
-Deepgram listens in far more languages than it speaks, so patients in a language
-with no confirmed voice are marked `voice_output_supported: false` and get text.
-Henriette (French) is seeded to make that path visible in the demo.
+Deepgram listens in far more languages than it speaks. Checked against its
+models endpoint on this account: nova-3 hears all six of ours, while Aura-2
+speaks only English, Spanish and French. Chinese, Portuguese and Hindi patients
+are marked `voice_output_supported: false` and read the reply instead. Wei
+(Mandarin) is seeded to make that path visible in the demo.
+
+Transcripts come back properly accented, so `extraction.fold()` strips Latin
+accents before matching -- without it, "náusea" missed and "nausea" hit, which
+is a bug that only ever appears with a live microphone.
 
 ## Design decisions worth knowing
 
@@ -122,13 +128,16 @@ LINQ_API_KEY=...
 MOCK_MODE=false        # only once Linq is real
 ```
 
-Then `pytest -m live --live` to confirm the configured model still answers, and
-`python scripts/smoke.py <deployed-url>` after every deploy.
+Then `pytest -m live --live` — that hits OpenAI and does a real Deepgram round
+trip (synthesize a sentence with Aura, transcribe it back with nova-3, assert
+the words survived), which is what catches a wrong model name or a dead key.
+Run `python scripts/smoke.py <deployed-url>` after every deploy.
 
 ## Next
 
-1. Deepgram streaming audio into `POST /checkins` (`audio_url` returns 501 today;
-   `GET /voice/agent-config/{id}` already returns the tuned Settings frame).
+1. Deepgram **streaming** over the Voice Agent socket. Batch transcription
+   already works (`POST /voice/transcribe`, `audio_url` on a check-in), and
+   `GET /voice/agent-config/{id}` returns the tuned Settings frame for it.
 2. A real Linq send plus the inbound photo -> medication-list path.
 3. Download and load the datasets (docs/DATA.md) so the MOCK badges disappear.
 4. The NHAMCS under-triage model: triage-time features only, split by year,

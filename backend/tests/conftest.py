@@ -17,6 +17,7 @@ from app.config import get_settings
 @pytest.fixture(autouse=True)
 def deterministic_settings(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "")
     monkeypatch.setenv("MOCK_MODE", "true")
     get_settings.cache_clear()
     yield

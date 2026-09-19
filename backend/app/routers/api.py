@@ -4,18 +4,31 @@ import hashlib
 import hmac
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 
 from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
-from .. import llm, retrieval
+from .. import llm, retrieval, voice
 from ..ladder import evaluate
 from ..notify import notify_caregivers
+from ..persona import voice_output_available
 from ..schemas import (
     BaselineSummary,
     CheckIn,
+    CheckInSource,
     CheckInCreate,
     CheckInResponse,
     EventType,
@@ -106,15 +119,28 @@ def list_checkins(
 async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
     senior = _get_senior(payload.senior_id)
 
-    if payload.audio_url and not payload.text:
-        # Sprint 1: pull the audio and run Deepgram here. The contract already
-        # allows it so the UI can start sending audio_url whenever it is ready.
-        raise HTTPException(
-            status_code=501,
-            detail="audio_url transcription lands in Sprint 1; send text for now",
-        )
-
     language = payload.language or senior.preferred_language
+    transcript = None
+
+    if payload.audio_url and not payload.text:
+        if not voice.is_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="DEEPGRAM_API_KEY is not configured; send text instead",
+            )
+        try:
+            transcript = voice.transcribe_url(payload.audio_url, language)
+        except voice.DeepgramError as exc:
+            # Loud, not silent. A dropped transcription must never look like a
+            # patient who reported nothing.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        payload = payload.model_copy(
+            update={
+                "text": transcript.text,
+                "transcript_confidence": transcript.confidence,
+                "source": CheckInSource.VOICE,
+            }
+        )
 
     # The lexicon always runs; the LLM only adds to it. See llm.extract_symptoms.
     extraction = llm.extract_symptoms(payload.text, language)
@@ -466,6 +492,70 @@ def demo_scenarios() -> list[dict]:
 # --------------------------------------------------------------------------
 # Retrieval and voice-agent wiring
 # --------------------------------------------------------------------------
+@router.get("/voice/coverage", tags=["voice"])
+def voice_coverage() -> dict:
+    """Which languages we can hear, and which we can speak back.
+
+    Sourced from Deepgram's models endpoint, not from a marketing page. The UI
+    uses `text_only` to decide when to show the "you can also type" path.
+    """
+    return voice.coverage()
+
+
+@router.post("/voice/transcribe", tags=["voice"])
+async def voice_transcribe(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    detect_language: bool = Form(False),
+) -> dict:
+    """Transcribe an uploaded recording without creating a check-in.
+
+    The UI uses this to show the senior what we heard before anything is
+    submitted -- confirming what we understood is part of the persona, not a
+    debugging aid.
+    """
+    if not voice.is_enabled():
+        raise HTTPException(status_code=503, detail="DEEPGRAM_API_KEY is not configured")
+    audio = await file.read()
+    try:
+        result = voice.transcribe_bytes(
+            audio,
+            content_type=file.content_type or "audio/wav",
+            language=language,
+            detect=detect_language,
+        )
+    except voice.DeepgramError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "text": result.text,
+        "confidence": round(result.confidence, 3),
+        "language": result.language,
+        "detected_language": result.detected_language,
+        "duration_s": result.duration_s,
+        "model": result.model,
+        "low_confidence": result.is_low_confidence,
+    }
+
+
+@router.post("/voice/speak", tags=["voice"])
+def voice_speak(text: str = Body(..., embed=True), language: str = Body("en", embed=True)):
+    """Speak a line back. 409 when the language has no voice, so the UI can
+    render text rather than play silence."""
+    if not voice.is_enabled():
+        raise HTTPException(status_code=503, detail="DEEPGRAM_API_KEY is not configured")
+    if not voice_output_available(language):
+        raise HTTPException(
+            status_code=409,
+            detail=f"no Deepgram voice for {language!r}; render this as text",
+        )
+    try:
+        audio = voice.speak(text, language)
+    except voice.DeepgramError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio, media_type="audio/wav")
+
+
 @router.get("/voice/agent-config/{senior_id}", tags=["voice"])
 def voice_agent_config(senior_id: str) -> dict:
     """The Settings frame the client sends Deepgram to open a voice session.

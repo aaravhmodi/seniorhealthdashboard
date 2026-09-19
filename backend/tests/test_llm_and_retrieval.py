@@ -270,10 +270,17 @@ def test_voice_agent_config_is_tuned_for_older_speakers(client):
 
 
 def test_voice_agent_falls_back_to_text_where_deepgram_has_no_voice(client):
-    config = client.get("/voice/agent-config/sen_henriette").json()
+    """Mandarin can be heard but not spoken: Wei reads the reply."""
+    config = client.get("/voice/agent-config/sen_chen").json()
     assert config["_meta"]["voice_output"] is False
     assert config["agent"]["speak"] is None
-    assert "ecrire" in config["agent"]["greeting"], "must offer the text path"
+    assert "打字" in config["agent"]["greeting"], "must offer the text path"
+
+
+def test_voice_agent_speaks_french(client):
+    config = client.get("/voice/agent-config/sen_henriette").json()
+    assert config["_meta"]["voice_output"] is True
+    assert config["agent"]["speak"]["provider"]["model"] == "aura-2-agathe-fr"
 
 
 def test_voice_agent_prompt_is_limited_to_retrieved_facts(client):

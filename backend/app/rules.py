@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from .extraction import fold
 from .schemas import ActionLevel, CheckIn, RedFlag, Senior, Vitals
 
 
@@ -28,7 +29,8 @@ def _labels(checkin: CheckIn) -> set[str]:
 
 
 def _any_phrase(text: str, phrases: list[str]) -> list[str]:
-    return [p for p in phrases if p in text]
+    """`text` is already folded by evaluate_rules; fold the needles to match."""
+    return [p for p in phrases if fold(p) in text]
 
 
 # -- individual rules ------------------------------------------------------
@@ -179,7 +181,8 @@ RULES: list[Rule] = [
 
 
 def evaluate_rules(checkin: CheckIn, senior: Senior) -> list[RedFlag]:
-    text = (checkin.raw_text or "").lower()
+    # Folded, so an accented transcript matches the unaccented phrase lists.
+    text = fold(checkin.raw_text or "")
     flags: list[RedFlag] = []
     for rule in RULES:
         matched = rule.test(checkin, senior, text)

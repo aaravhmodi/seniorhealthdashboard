@@ -72,7 +72,9 @@ def _senior_chen() -> Senior:
         date_of_birth=date(1941, 11, 2),
         age=84,
         preferred_language="zh",
-        voice_output_supported=True,
+        # Deepgram hears Mandarin but has no Aura voice for it, so Wei reads
+        # the reply. This is the text-fallback path, visible in the demo.
+        voice_output_supported=False,
         conditions=["atrial fibrillation", "chronic kidney disease stage 3"],
         allergies=[],
         medications=[
@@ -130,7 +132,7 @@ def _senior_henriette() -> Senior:
         date_of_birth=date(1944, 8, 21),
         age=82,
         preferred_language="fr",
-        voice_output_supported=False,  # no confirmed Aura voice: text fallback
+        voice_output_supported=True,  # aura-2-agathe-fr
         conditions=["osteoporosis", "hypothyroidism"],
         allergies=["codeine"],
         medications=[

@@ -195,6 +195,54 @@ def test_french_intake_returns_french_to_the_patient_and_english_to_staff(client
     assert lint(ev["explanation"], "fr").ok
 
 
+# -- accented transcripts --------------------------------------------------
+# Deepgram returns properly accented text. The phrase lists are unaccented, so
+# every one of these silently returned nothing before extraction.fold() existed
+# -- a bug that would only ever have shown up on stage, with a live microphone.
+ACCENTED = [
+    ("es", "Me falta el aire y tengo náusea, y estoy sudando frío.",
+     {"shortness of breath", "nausea"}),
+    ("es", "Estoy muy mareada y con náuseas.", {"dizziness", "nausea"}),
+    ("es", "Me caí en el baño y me golpeé la cabeza.", {"fall"}),
+    ("fr", "Je suis tombée et je me suis cogné la tête.", {"fall"}),
+    ("fr", "J'ai des vertiges et je n'ai pas d'appétit.",
+     {"dizziness", "poor appetite"}),
+    ("fr", "J'ai de la fièvre depuis hier.", {"fever"}),
+]
+
+
+@pytest.mark.parametrize("language,text,expected", ACCENTED)
+def test_accented_transcripts_extract_the_same_as_unaccented(language, text, expected):
+    labels = {s.label for s in extract(text, language)}
+    assert expected <= labels, f"{text!r} -> {labels}"
+
+
+def test_accents_do_not_change_the_action_level(client):
+    """The same sentence, with and without accents, must land on the same rung."""
+    plain = "Me falta el aire y tengo nausea, y estoy sudando frio."
+    accented = "Me falta el aire y tengo náusea, y estoy sudando frío."
+
+    levels = []
+    for text in (plain, accented):
+        client.post("/demo/reset")
+        levels.append(
+            client.post(
+                "/checkins",
+                json={"senior_id": "sen_rosa", "source": "voice", "language": "es",
+                      "text": text, "transcript_confidence": 0.99},
+            ).json()["evaluation"]["level"]
+        )
+    assert levels[0] == levels[1] == 3
+
+
+def test_folding_leaves_non_latin_scripts_alone():
+    from app.extraction import fold
+
+    assert fold("请现在去急诊") == "请现在去急诊"
+    assert fold("नमस्ते") == "नमस्ते"
+    assert fold("NÁUSEA") == "nausea"
+
+
 # -- Deepgram wiring -------------------------------------------------------
 def test_listen_params_slow_the_endpointing_for_older_speakers():
     params = VOICE.deepgram_listen_params("fr")
@@ -203,17 +251,27 @@ def test_listen_params_slow_the_endpointing_for_older_speakers():
     assert params["interim_results"] is True
 
 
-def test_voice_output_is_honest_about_coverage():
+@pytest.mark.parametrize("language", ["en", "es", "fr"])
+def test_languages_deepgram_can_speak(language):
+    """Verified against GET /v1/models: aura-2 covers de en es fr it ja nl."""
+    assert voice_output_available(language)
+    assert VOICE.deepgram_speak_params(language)["model"] in DEEPGRAM_TTS_VOICE.values()
+
+
+@pytest.mark.parametrize("language", ["zh", "pt", "hi"])
+def test_languages_deepgram_can_hear_but_not_speak(language):
     """We never claim a spoken language Deepgram cannot actually speak."""
-    assert voice_output_available("en")
-    assert not voice_output_available("fr")
-    assert VOICE.deepgram_speak_params("fr") is None
-    assert VOICE.deepgram_speak_params("en")["model"] in DEEPGRAM_TTS_VOICE.values()
+    assert not voice_output_available(language)
+    assert VOICE.deepgram_speak_params(language) is None
+    # ...but we can still listen in it, which is the point of the fallback.
+    assert VOICE.deepgram_listen_params(language)["language"]
 
 
-def test_seed_marks_the_french_patient_as_text_fallback(client):
-    henriette = client.get("/seniors/sen_henriette").json()
-    assert henriette["voice_output_supported"] is False
+def test_seed_voice_support_matches_actual_deepgram_coverage(client):
+    for senior in client.get("/seniors").json():
+        assert senior["voice_output_supported"] == voice_output_available(
+            senior["preferred_language"]
+        ), f"{senior['id']} claims the wrong voice support"
 
 
 def test_system_prompt_carries_the_rules_and_the_limits():

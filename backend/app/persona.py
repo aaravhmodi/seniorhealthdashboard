@@ -80,10 +80,14 @@ DEEPGRAM_STT_LANGUAGE: dict[str, str] = {
     "en": "en-US", "es": "es", "fr": "fr", "pt": "pt", "zh": "zh", "hi": "hi",
 }
 
+# Verified against GET https://api.deepgram.com/v1/models on this account.
+# Aura-2 speaks exactly seven languages: de en es fr it ja nl. Of the six we
+# support, that covers English, Spanish and French -- Chinese, Portuguese and
+# Hindi can be heard but not spoken back, so those patients get text.
 DEEPGRAM_TTS_VOICE: dict[str, str] = {
     "en": "aura-2-asteria-en",
     "es": "aura-2-celeste-es",
-    # fr / zh / hi have no confirmed Aura voice: text fallback, and the UI says so.
+    "fr": "aura-2-agathe-fr",
 }
 
 SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "es", "fr", "zh", "pt", "hi")

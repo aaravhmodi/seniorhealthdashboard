@@ -74,11 +74,13 @@ def test_unknown_senior_is_404(client):
     ).status_code == 404
 
 
-def test_audio_url_is_explicitly_not_implemented(client):
+def test_audio_url_without_deepgram_configured_fails_loudly(client):
+    """A dropped transcription must never look like a patient who said nothing."""
     resp = client.post(
         "/checkins", json={"senior_id": "sen_rosa", "audio_url": "https://x/a.wav"}
     )
-    assert resp.status_code == 501, "must fail loudly, not silently return level 1"
+    assert resp.status_code == 503
+    assert "DEEPGRAM_API_KEY" in resp.json()["detail"]
 
 
 # -- the safety layer ------------------------------------------------------

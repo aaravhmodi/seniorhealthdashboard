@@ -72,12 +72,24 @@ prefer_lower_pitch = True
 
 ## Honesty about voice coverage
 
-Deepgram listens in far more languages than it speaks. `DEEPGRAM_TTS_VOICE` lists
-only the languages we have a confirmed voice for; everything else returns `None`
-from `deepgram_speak_params()`, the patient is marked `voice_output_supported:
-false`, and the UI renders text with the "you can also type" line. We do not
-promise a spoken language we cannot deliver — Henriette (French) is seeded
-precisely so this path is visible in the demo rather than discovered on stage.
+Deepgram listens in far more languages than it speaks. Verified against
+`GET https://api.deepgram.com/v1/models` on this account:
+
+| | languages |
+|---|---|
+| nova-3 hears | en es fr zh pt hi (and ~40 more) |
+| aura-2 speaks | de en es fr it ja nl — **and nothing else** |
+
+So of the six languages we support, three can be spoken back and three cannot.
+Chinese, Portuguese and Hindi patients get `voice_output_supported: false`, a
+`None` from `deepgram_speak_params()`, a 409 from `POST /voice/speak`, and the
+"you can also type" line. Wei (Mandarin) is seeded precisely so this path is
+visible in the demo rather than discovered on stage.
+
+This table was wrong once — French was marked unspeakable on an assumption, and
+Mandarin was marked speakable. `pytest -m live --live` now synthesizes a line in
+every configured voice and transcribes it back, so the claim is checked against
+the API rather than against memory.
 
 ## Why the LLM cannot drift out of this
 

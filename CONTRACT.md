@@ -39,6 +39,9 @@ rung. Nothing lowers a rule's floor.
 | GET | `/evidence/preview?senior_id=&text=` | `EvidenceCard[]` | no check-in stored |
 | GET | `/events/recent?limit=` | `WSEvent[]` | polling fallback for the socket |
 | GET | `/voice/agent-config/{senior_id}` | Deepgram Settings frame | senior-tuned endpointing, retrieved context inlined |
+| GET | `/voice/coverage` | what we can hear vs speak | `text_only` drives the text fallback |
+| POST | `/voice/transcribe` | `{text, confidence, ...}` | multipart audio; 503 without a key, 502 on failure |
+| POST | `/voice/speak` | `audio/wav` | 409 where the language has no voice |
 | GET | `/retrieval/search?q=&senior_id=&k=` | scored chunks | inspect what the model is given |
 | POST | `/retrieval/reindex` | `{indexed_chunks}` | rebuild the vector index |
 | GET | `/datasets/status` | warehouse + table availability | which cards are real vs MOCK |
@@ -85,8 +88,11 @@ rung. Nothing lowers a rule's floor.
 }
 ```
 
-`audio_url` is accepted by the schema but returns **501** until Sprint 1. It
-fails loudly on purpose rather than silently returning level 1.
+`audio_url` is transcribed with Deepgram nova-3 and then runs the normal
+ladder; the response carries the transcript as `checkin.raw_text` and the
+confidence as `transcript_confidence`. It fails **loudly** on purpose — 503 if
+no key is configured, 502 if transcription fails — because a dropped
+transcription must never look like a patient who reported nothing.
 
 ### WebSocket /events
 

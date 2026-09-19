@@ -9,6 +9,7 @@ Sprint 1 swaps extract() for an LLM call behind the same signature.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .schemas import Symptom
 
@@ -25,7 +26,7 @@ LEXICON: dict[str, list[str]] = {
                             "essouffle", "du mal a respirer", "manque d'air",
                             "je ne peux pas respirer"],
     "dizziness": ["dizzy", "dizziness", "lightheaded", "light headed", "mareo",
-                  "mareado", "头晕", "tontura", "chakkar",
+                  "mareado", "mareada", "头晕", "tontura", "chakkar",
                   "vertige", "etourdi", "la tete qui tourne"],
     "confusion": ["confused", "confusion", "not making sense", "disoriented",
                   "forgetful today", "confundido", "confusion mental", "意识模糊",
@@ -98,6 +99,32 @@ ONSET_RE = re.compile(
 _NORMALIZE = str.maketrans({"’": "'", "“": '"', "”": '"'})
 
 
+def fold(text: str) -> str:
+    """Lowercase and strip accents.
+
+    Deepgram returns properly accented text -- "náusea", "frío", "cogné la
+    tête" -- while the phrase lists here are written unaccented. Without
+    folding, a real transcript silently misses symptoms that a typed one
+    catches, which is the worst kind of bug: it only appears on stage.
+
+    Only marks attached to a Latin base are dropped. That restriction matters:
+    the Devanagari virama and the Hindi vowel signs are combining marks too, and
+    stripping them turns नमस्ते into नमसते -- silently mangling a language we
+    claim to support. CJK has no combining marks and is untouched either way.
+    """
+    lowered = text.translate(_NORMALIZE).lower()
+    out: list[str] = []
+    latin_base = False
+    for char in unicodedata.normalize("NFKD", lowered):
+        if unicodedata.combining(char):
+            if not latin_base:
+                out.append(char)
+            continue
+        latin_base = char.isascii() or "LATIN" in unicodedata.name(char, "")
+        out.append(char)
+    return "".join(out)
+
+
 def _severity(text: str, near: str) -> int | None:
     """Pick the strongest severity word that appears near the symptom phrase."""
     idx = text.find(near)
@@ -111,16 +138,16 @@ def _severity(text: str, near: str) -> int | None:
 def extract(text: str | None, language: str = "en") -> list[Symptom]:
     if not text:
         return []
-    norm = text.translate(_NORMALIZE).lower()
+    norm = fold(text)
     onset_match = ONSET_RE.search(norm)
     onset = onset_match.group(0).strip() if onset_match else None
     is_new = any(m in norm for m in NEW_MARKERS) or None
 
     found: list[Symptom] = []
     for label, phrases in LEXICON.items():
-        if any(neg in norm for neg in NEGATIONS.get(label, [])):
+        if any(fold(neg) in norm for neg in NEGATIONS.get(label, [])):
             continue
-        hit = next((p for p in phrases if p in norm), None)
+        hit = next((fold(p) for p in phrases if fold(p) in norm), None)
         if hit:
             found.append(
                 Symptom(
