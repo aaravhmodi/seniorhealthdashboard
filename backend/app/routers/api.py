@@ -1,0 +1,427 @@
+from __future__ import annotations
+
+import hashlib
+import hmac
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException, Query, Request
+
+from ..config import get_settings
+from ..evidence import baseline_cards, faers_cards, neiss_cards
+from ..extraction import extract
+from ..handoff import build_packet, should_build
+from ..ladder import evaluate
+from ..notify import notify_caregivers
+from ..schemas import (
+    BaselineSummary,
+    CheckIn,
+    CheckInCreate,
+    CheckInResponse,
+    EventType,
+    EvidenceCard,
+    Evaluation,
+    HandoffPacket,
+    Health,
+    LinqInbound,
+    Medication,
+    Senior,
+    Timeline,
+    TimelineEntry,
+    WSEvent,
+)
+from ..events import bus
+from ..seed import seed
+from ..store import new_id, now, store
+
+router = APIRouter()
+
+
+def _get_senior(senior_id: str) -> Senior:
+    senior = store.get_senior(senior_id)
+    if not senior:
+        raise HTTPException(status_code=404, detail=f"unknown senior {senior_id}")
+    return senior
+
+
+# --------------------------------------------------------------------------
+# Health
+# --------------------------------------------------------------------------
+@router.get("/healthz", response_model=Health, tags=["meta"])
+def healthz() -> Health:
+    return Health(
+        mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors)
+    )
+
+
+# --------------------------------------------------------------------------
+# Seniors
+# --------------------------------------------------------------------------
+@router.get("/seniors", response_model=list[Senior], tags=["seniors"])
+def list_seniors() -> list[Senior]:
+    return store.list_seniors()
+
+
+@router.get("/seniors/{senior_id}", response_model=Senior, tags=["seniors"])
+def get_senior(senior_id: str) -> Senior:
+    return _get_senior(senior_id)
+
+
+@router.get("/seniors/{senior_id}/timeline", response_model=Timeline, tags=["seniors"])
+def get_timeline(
+    senior_id: str, window_days: int = Query(default=14, ge=1, le=90)
+) -> Timeline:
+    _get_senior(senior_id)
+    return Timeline(
+        senior_id=senior_id,
+        entries=store.timeline_for(senior_id),
+        baseline=store.baseline(senior_id, window_days),
+    )
+
+
+@router.get(
+    "/seniors/{senior_id}/baseline", response_model=BaselineSummary, tags=["seniors"]
+)
+def get_baseline(
+    senior_id: str, window_days: int = Query(default=14, ge=1, le=90)
+) -> BaselineSummary:
+    _get_senior(senior_id)
+    return store.baseline(senior_id, window_days)
+
+
+@router.get(
+    "/seniors/{senior_id}/checkins", response_model=list[CheckIn], tags=["seniors"]
+)
+def list_checkins(
+    senior_id: str, limit: int = Query(default=20, ge=1, le=200)
+) -> list[CheckIn]:
+    _get_senior(senior_id)
+    return store.checkins_for(senior_id, limit)
+
+
+# --------------------------------------------------------------------------
+# Check-ins -- the one endpoint the whole demo runs through
+# --------------------------------------------------------------------------
+@router.post("/checkins", response_model=CheckInResponse, tags=["checkins"])
+async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
+    senior = _get_senior(payload.senior_id)
+
+    if payload.audio_url and not payload.text:
+        # Sprint 1: pull the audio and run Deepgram here. The contract already
+        # allows it so the UI can start sending audio_url whenever it is ready.
+        raise HTTPException(
+            status_code=501,
+            detail="audio_url transcription lands in Sprint 1; send text for now",
+        )
+
+    language = payload.language or senior.preferred_language
+    checkin = CheckIn(
+        id=new_id("chk"),
+        senior_id=senior.id,
+        created_at=now(),
+        source=payload.source,
+        language=language,
+        raw_text=payload.text,
+        transcript_confidence=payload.transcript_confidence,
+        symptoms=extract(payload.text, language),
+        vitals=payload.vitals,
+        meds_taken_today=payload.meds_taken_today or [],
+        client_ref=payload.client_ref,
+    )
+    store.put_checkin(checkin)
+    bus.publish(
+        EventType.CHECKIN_CREATED,
+        senior.id,
+        {"checkin_id": checkin.id, "client_ref": checkin.client_ref},
+    )
+
+    previous = store.latest_evaluation(senior.id)
+    previous_level = previous.level if previous else None
+    evaluation = evaluate(
+        checkin, senior, store.baseline(senior.id), previous_level=previous_level
+    )
+    store.put_evaluation(evaluation)
+
+    store.add_timeline(
+        senior.id,
+        TimelineEntry(
+            at=evaluation.created_at,
+            type=EventType.EVALUATION_COMPLETED,
+            checkin_id=checkin.id,
+            evaluation_id=evaluation.id,
+            level=evaluation.level,
+            summary=", ".join(s.label for s in checkin.symptoms) or "no symptoms reported",
+            detail={"source": checkin.source.value},
+        ),
+    )
+    bus.publish(
+        EventType.EVALUATION_COMPLETED,
+        senior.id,
+        {
+            "evaluation_id": evaluation.id,
+            "checkin_id": checkin.id,
+            "level": int(evaluation.level),
+            "level_label": evaluation.level_label,
+        },
+    )
+    if previous_level is not None and previous_level != evaluation.level:
+        bus.publish(
+            EventType.LEVEL_CHANGED,
+            senior.id,
+            {"from": int(previous_level), "to": int(evaluation.level)},
+        )
+
+    notifications = await notify_caregivers(senior, evaluation)
+    for receipt in notifications:
+        store.add_timeline(
+            senior.id,
+            TimelineEntry(
+                at=receipt.sent_at or now(),
+                type=EventType.CAREGIVER_MESSAGE,
+                evaluation_id=evaluation.id,
+                summary=f"Notified {receipt.to} ({receipt.status})",
+                detail={"body": receipt.body},
+            ),
+        )
+
+    if should_build(evaluation):
+        packet = build_packet(
+            senior,
+            checkin,
+            evaluation,
+            store.baseline(senior.id),
+            store.checkins_for(senior.id, 5),
+        )
+        store.handoffs[senior.id] = packet
+        store.add_timeline(
+            senior.id,
+            TimelineEntry(
+                at=packet.created_at,
+                type=EventType.HANDOFF_READY,
+                evaluation_id=evaluation.id,
+                level=evaluation.level,
+                summary="ED handoff packet generated",
+                detail={"handoff_id": packet.id},
+            ),
+        )
+        bus.publish(
+            EventType.HANDOFF_READY,
+            senior.id,
+            {"handoff_id": packet.id, "level": int(evaluation.level)},
+        )
+
+    return CheckInResponse(
+        checkin=checkin, evaluation=evaluation, notifications=notifications
+    )
+
+
+@router.get("/checkins/{checkin_id}", response_model=CheckInResponse, tags=["checkins"])
+def get_checkin(checkin_id: str) -> CheckInResponse:
+    checkin = store.checkins.get(checkin_id)
+    if not checkin:
+        raise HTTPException(status_code=404, detail="unknown check-in")
+    evaluation = store.evaluation_for_checkin(checkin_id)
+    if not evaluation:
+        raise HTTPException(status_code=409, detail="check-in has no evaluation yet")
+    return CheckInResponse(checkin=checkin, evaluation=evaluation)
+
+
+@router.get(
+    "/seniors/{senior_id}/latest-evaluation", response_model=Evaluation, tags=["checkins"]
+)
+def latest_evaluation(senior_id: str) -> Evaluation:
+    _get_senior(senior_id)
+    ev = store.latest_evaluation(senior_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="no evaluations yet")
+    return ev
+
+
+# --------------------------------------------------------------------------
+# Handoff
+# --------------------------------------------------------------------------
+@router.get("/handoff/{senior_id}", response_model=HandoffPacket, tags=["handoff"])
+def get_handoff(senior_id: str, force: bool = False) -> HandoffPacket:
+    senior = _get_senior(senior_id)
+    packet = store.handoffs.get(senior_id)
+    if packet and not force:
+        return packet
+
+    evaluation = store.latest_evaluation(senior_id)
+    checkins = store.checkins_for(senior_id, 5)
+    if not evaluation or not checkins:
+        raise HTTPException(status_code=404, detail="nothing to hand off yet")
+    if not should_build(evaluation) and not force:
+        # Don't manufacture an ED packet for someone who is fine; ?force=true
+        # exists so a clinician can pull one anyway.
+        raise HTTPException(
+            status_code=404,
+            detail="latest evaluation is below ED level; pass ?force=true to build anyway",
+        )
+    packet = build_packet(
+        senior, checkins[0], evaluation, store.baseline(senior_id), checkins
+    )
+    store.handoffs[senior_id] = packet
+    return packet
+
+
+# --------------------------------------------------------------------------
+# Internal evidence surface (the data track builds against these)
+# --------------------------------------------------------------------------
+@router.get("/evidence/preview", response_model=list[EvidenceCard], tags=["evidence"])
+def evidence_preview(senior_id: str, text: str) -> list[EvidenceCard]:
+    """Run the evidence lookups against ad-hoc text without storing a check-in."""
+    senior = _get_senior(senior_id)
+    probe = CheckIn(
+        id="chk_preview",
+        senior_id=senior.id,
+        created_at=now(),
+        source="text",
+        language=senior.preferred_language,
+        raw_text=text,
+        symptoms=extract(text, senior.preferred_language),
+    )
+    baseline = store.baseline(senior.id)
+    return (
+        neiss_cards(probe, senior)
+        + faers_cards(probe, senior)
+        + baseline_cards(baseline, probe)
+    )
+
+
+# --------------------------------------------------------------------------
+# Linq inbound webhook (backend-only)
+# --------------------------------------------------------------------------
+@router.post("/webhooks/linq", tags=["webhooks"])
+async def linq_webhook(
+    request: Request,
+    payload: LinqInbound,
+    x_linq_signature: Optional[str] = Header(default=None),
+) -> dict:
+    settings = get_settings()
+    if not settings.mock_mode:
+        raw = await request.body()
+        expected = hmac.new(
+            settings.linq_webhook_secret.encode(), raw, hashlib.sha256
+        ).hexdigest()
+        if not x_linq_signature or not hmac.compare_digest(expected, x_linq_signature):
+            raise HTTPException(status_code=401, detail="bad signature")
+
+    senior, caregiver = store.caregiver_by_thread(payload.thread_id)
+    if not senior:
+        senior, caregiver = store.caregiver_by_phone(payload.from_phone_e164)
+    if not senior:
+        raise HTTPException(status_code=404, detail="no senior for that thread")
+
+    # Sprint 3: a photo of the pill bottles goes to a vision model, gets
+    # normalized against the ingredient dictionary and re-scored by FAERS.
+    # Sprint 0 records the intent so the UI can render the pending state.
+    added: list[Medication] = []
+    if payload.media_urls:
+        store.add_timeline(
+            senior.id,
+            TimelineEntry(
+                at=payload.received_at or now(),
+                type=EventType.MEDS_UPDATED,
+                summary=f"{caregiver.name if caregiver else 'Caregiver'} sent a photo "
+                        f"of the medicine list (parsing lands in Sprint 3)",
+                detail={"media_count": len(payload.media_urls), "pending": True},
+            ),
+        )
+        bus.publish(
+            EventType.MEDS_UPDATED,
+            senior.id,
+            {"pending": True, "media_count": len(payload.media_urls)},
+        )
+
+    if payload.text:
+        store.add_timeline(
+            senior.id,
+            TimelineEntry(
+                at=payload.received_at or now(),
+                type=EventType.CAREGIVER_MESSAGE,
+                summary=f"Inbound from {caregiver.name if caregiver else 'caregiver'}",
+                detail={"text": payload.text},
+            ),
+        )
+        bus.publish(
+            EventType.CAREGIVER_MESSAGE,
+            senior.id,
+            {"direction": "inbound", "text": payload.text},
+        )
+
+    return {"ok": True, "senior_id": senior.id, "medications_added": len(added)}
+
+
+# --------------------------------------------------------------------------
+# Demo controls -- handy on stage, and the reset the UI needs between runs
+# --------------------------------------------------------------------------
+@router.post("/demo/reset", tags=["demo"])
+def demo_reset() -> Health:
+    store.seniors.clear()
+    store.checkins.clear()
+    store.evaluations.clear()
+    store.handoffs.clear()
+    store.timeline.clear()
+    seed(store)
+    return Health(mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors))
+
+
+@router.get("/demo/scenarios", tags=["demo"])
+def demo_scenarios() -> list[dict]:
+    """Canned inputs for the demo, so nobody improvises into a level-1 answer."""
+    return [
+        {
+            "name": "Rosa -- atypical cardiac (the wow moment)",
+            "senior_id": "sen_rosa",
+            "language": "es",
+            "source": "voice",
+            "text": "Me falta el aire y tengo nausea, y estoy sudando frio.",
+            "expect_level": 3,
+        },
+        {
+            "name": "Rosa -- routine day",
+            "senior_id": "sen_rosa",
+            "language": "es",
+            "source": "voice",
+            "text": "Hoy me siento bien, solo un poco de dolor de espalda leve.",
+            "expect_level": 1,
+        },
+        {
+            "name": "Rosa -- dizziness on furosemide + lisinopril",
+            "senior_id": "sen_rosa",
+            "language": "es",
+            "source": "text",
+            "text": "Tengo mareo fuerte cuando me levanto y no tengo hambre.",
+            "expect_level": 2,
+        },
+        {
+            "name": "Wei -- fall on warfarin",
+            "senior_id": "sen_chen",
+            "language": "en",
+            "source": "text",
+            "text": "I fell in the bathroom this morning and hit my head.",
+            "expect_level": 3,
+        },
+        {
+            "name": "Wei -- new confusion with urinary symptoms (UTI delirium)",
+            "senior_id": "sen_chen",
+            "language": "en",
+            "source": "voice",
+            "text": "He is suddenly confused today and says burning when i pee.",
+            "expect_level": 3,
+        },
+        {
+            "name": "Walter -- stroke signs",
+            "senior_id": "sen_walter",
+            "language": "en",
+            "source": "voice",
+            "text": "My face is drooping and my arm is weak on one side, slurred speech.",
+            "expect_level": 4,
+        },
+    ]
+
+
+@router.get("/events/recent", response_model=list[WSEvent], tags=["events"])
+def recent_events(limit: int = Query(default=25, ge=1, le=200)) -> list[WSEvent]:
+    """Polling fallback, for when the WebSocket is inconvenient (or on stage)."""
+    return bus.recent(limit)

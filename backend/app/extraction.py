@@ -19,7 +19,8 @@ LEXICON: dict[str, list[str]] = {
                    "presion en el pecho", "胸痛", "胸口痛", "dor no peito"],
     "shortness of breath": ["short of breath", "shortness of breath", "can't breathe",
                             "cant breathe", "trouble breathing", "falta de aire",
-                            "no puedo respirar", "呼吸困难", "喘不过气", "falta de ar"],
+                            "falta el aire", "me falta aire", "no puedo respirar",
+                            "呼吸困难", "喘不过气", "falta de ar"],
     "dizziness": ["dizzy", "dizziness", "lightheaded", "light headed", "mareo",
                   "mareado", "头晕", "tontura", "chakkar"],
     "confusion": ["confused", "confusion", "not making sense", "disoriented",
@@ -47,6 +48,20 @@ LEXICON: dict[str, list[str]] = {
                  "头痛", "dor de cabeca"],
     "bleeding": ["bleeding", "blood in", "coughing blood", "sangrado", "sangre",
                  "出血", "sangramento"],
+}
+
+# Explicit negations only. We do NOT infer negation from a nearby "no", because
+# "no puedo respirar" (I can't breathe) would read as a negation and silence the
+# most urgent thing a patient can say. Listing the phrases keeps it safe.
+NEGATIONS: dict[str, list[str]] = {
+    "shortness of breath": ["no trouble breathing", "not short of breath",
+                            "no shortness of breath", "breathing is fine",
+                            "sin problemas para respirar", "呼吸没问题"],
+    "chest pain": ["no chest pain", "chest is fine", "sin dolor de pecho", "没有胸痛"],
+    "fever": ["no fever", "sin fiebre", "没有发烧"],
+    "fall": ["did not fall", "didn't fall", "no me cai", "没有摔倒"],
+    "confusion": ["not confused", "no confusion", "no esta confundido"],
+    "nausea": ["no nausea", "sin nausea"],
 }
 
 NEW_MARKERS = ["new", "never before", "first time", "suddenly", "sudden",
@@ -89,6 +104,8 @@ def extract(text: str | None, language: str = "en") -> list[Symptom]:
 
     found: list[Symptom] = []
     for label, phrases in LEXICON.items():
+        if any(neg in norm for neg in NEGATIONS.get(label, [])):
+            continue
         hit = next((p for p in phrases if p in norm), None)
         if hit:
             found.append(
