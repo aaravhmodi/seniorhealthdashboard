@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowRight, Globe2, HeartPulse, LogOut, Mic, Pill, UserRound, X } from 'lucide-react'
 import { demoCarePlan, demoCheckins, demoEvaluation, demoSenior } from './mock'
@@ -35,6 +35,9 @@ function Dashboard({ senior, plan, onSignOut }: { senior: Senior; plan: CarePlan
   const [evaluation, setEvaluation] = useState(demoEvaluation)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const recorder = useRef<MediaRecorder | null>(null)
+  const audioChunks = useRef<Blob[]>([])
 
   useEffect(() => {
     const voiceLanguage = (event: Event) => i18n.changeLanguage(supportedLanguage((event as CustomEvent<{ language?: string }>).detail?.language))
@@ -53,7 +56,24 @@ function Dashboard({ senior, plan, onSignOut }: { senior: Senior; plan: CarePlan
     finally { setSaving(false) }
   }
 
-  return <div className="app-shell"><header className="topbar"><Brand/><nav><button className={page === 'health' ? 'nav-active' : ''} onClick={() => setPage('health')}>{t('health')}</button><button className={page === 'plan' ? 'nav-active' : ''} onClick={() => setPage('plan')}>{t('plan')}</button><button className={page === 'history' ? 'nav-active' : ''} onClick={() => setPage('history')}>{t('history')}</button></nav><div className="topbar-actions"><LanguagePicker/><button className="profile-button" onClick={() => setProfileOpen(true)}><UserRound size={18}/>{t('profile')}</button><button className="text-button" onClick={onSignOut}><LogOut size={17}/>{t('signOut')}</button></div></header>{page === 'health' && <main className="dashboard"><div className="greeting"><h1>{t('greeting', { name: senior.display_name.split(' ')[0] })}</h1><p>{t('feeling')}</p></div><section className="checkin-card"><h2>{t('tell')}</h2><textarea value={message} onChange={event => setMessage(event.target.value)} rows={4}/><div className="checkin-actions"><button className="voice-button" type="button" disabled><Mic size={20}/>{t('speak')}</button><button className="primary-button big-button" disabled={!message.trim() || saving} onClick={() => void addCheckin()}>{saving ? 'Saving…' : t('check')} <ArrowRight size={20}/></button></div>{error && <p className="form-error" role="alert">{error}</p>}</section><section className="guidance-card watch"><h2>{t('guidance')}</h2><p>{evaluation.explanation}</p></section></main>}{page === 'plan' && <main className="dashboard"><h1>{t('plan')}</h1><PlanSection title={t('dailyRoutine')} values={plan.routines}/><PlanSection title={t('instructions')} values={plan.instructions}/><PlanSection title={t('appointment')} values={plan.appointments.map(item => `${item.title} · ${item.date}`)}/></main>}{page === 'history' && <main className="dashboard"><h1>{t('history')}</h1>{checkins.map(checkin => <article className="history-record" key={checkin.id}><strong>{checkin.symptoms.map(symptom => symptom.label).join(', ') || 'Check-in'}</strong><p>{checkin.created_at}</p><p>{checkin.raw_text}</p></article>)}</main>}{profileOpen && <Profile senior={senior} plan={plan} onClose={() => setProfileOpen(false)}/>}</div>
+  const toggleRecording = async () => {
+    if (recording && recorder.current) { recorder.current.stop(); return }
+    if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) { setError('Voice recording is not supported in this browser.'); return }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const next = new MediaRecorder(stream)
+      audioChunks.current = []
+      next.ondataavailable = event => { if (event.data.size) audioChunks.current.push(event.data) }
+      next.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop()); setRecording(false); recorder.current = null
+        try { const transcript = await api.transcribe(new Blob(audioChunks.current, { type: next.mimeType || 'audio/webm' }), i18n.language); setMessage(transcript.text); if (!transcript.text) setError('No speech was detected. Please try again.') }
+        catch { setError('Voice transcription is unavailable. Please type your check-in or configure DEEPGRAM_API_KEY.') }
+      }
+      recorder.current = next; next.start(); setRecording(true); setError('')
+    } catch { setError('Microphone permission was denied or unavailable.') }
+  }
+
+  return <div className="app-shell"><header className="topbar"><Brand/><nav><button className={page === 'health' ? 'nav-active' : ''} onClick={() => setPage('health')}>{t('health')}</button><button className={page === 'plan' ? 'nav-active' : ''} onClick={() => setPage('plan')}>{t('plan')}</button><button className={page === 'history' ? 'nav-active' : ''} onClick={() => setPage('history')}>{t('history')}</button></nav><div className="topbar-actions"><LanguagePicker/><button className="profile-button" onClick={() => setProfileOpen(true)}><UserRound size={18}/>{t('profile')}</button><button className="text-button" onClick={onSignOut}><LogOut size={17}/>{t('signOut')}</button></div></header>{page === 'health' && <main className="dashboard"><div className="greeting"><h1>{t('greeting', { name: senior.display_name.split(' ')[0] })}</h1><p>{t('feeling')}</p></div><section className="checkin-card"><h2>{t('tell')}</h2><textarea value={message} onChange={event => setMessage(event.target.value)} rows={4}/><div className="checkin-actions"><button className="voice-button" type="button" onClick={() => void toggleRecording()}>{recording ? 'Stop recording' : <><Mic size={20}/>{t('speak')}</>}</button><button className="primary-button big-button" disabled={!message.trim() || saving} onClick={() => void addCheckin()}>{saving ? 'Saving…' : t('check')} <ArrowRight size={20}/></button></div>{error && <p className="form-error" role="alert">{error}</p>}</section><section className="guidance-card watch"><h2>{t('guidance')}</h2><p>{evaluation.explanation}</p></section></main>}{page === 'plan' && <main className="dashboard"><h1>{t('plan')}</h1><PlanSection title={t('dailyRoutine')} values={plan.routines}/><PlanSection title={t('instructions')} values={plan.instructions}/><PlanSection title={t('appointment')} values={plan.appointments.map(item => `${item.title} · ${item.date}`)}/></main>}{page === 'history' && <main className="dashboard"><h1>{t('history')}</h1>{checkins.map(checkin => <article className="history-record" key={checkin.id}><strong>{checkin.symptoms.map(symptom => symptom.label).join(', ') || 'Check-in'}</strong><p>{checkin.created_at}</p><p>{checkin.raw_text}</p></article>)}</main>}{profileOpen && <Profile senior={senior} plan={plan} onClose={() => setProfileOpen(false)}/>}</div>
 }
 function PlanSection({ title, values }: { title: string; values: string[] }) { const { t } = useTranslation(); return <section className="care-plan-card"><h2>{title}</h2>{values.length ? <ul>{values.map(value => <li key={value}>{value}</li>)}</ul> : <p className="muted">{t('none')}</p>}</section> }
 
