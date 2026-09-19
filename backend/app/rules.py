@@ -90,7 +90,8 @@ BLOOD_THINNERS = {"warfarin", "apixaban", "rivaroxaban", "clopidogrel",
                   "dabigatran", "eliquis", "xarelto", "coumadin", "plavix"}
 
 HEAD_STRIKE = ["hit my head", "hit her head", "hit his head", "blacked out",
-               "passed out", "knocked out", "me golpee la cabeza", "撞到头"]
+               "passed out", "knocked out", "me golpee la cabeza", "撞到头",
+               "cogne la tete", "cognee la tete", "tape la tete", "perdu connaissance"]
 
 
 def _on_blood_thinner(s: Senior) -> list[str]:

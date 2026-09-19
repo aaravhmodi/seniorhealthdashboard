@@ -122,6 +122,37 @@ def _senior_walter() -> Senior:
     )
 
 
+def _senior_henriette() -> Senior:
+    """French-speaking, lives alone, son checks in from another city."""
+    return Senior(
+        id="sen_henriette",
+        display_name="Henriette Dubois",
+        date_of_birth=date(1944, 8, 21),
+        age=82,
+        preferred_language="fr",
+        voice_output_supported=False,  # no confirmed Aura voice: text fallback
+        conditions=["osteoporosis", "hypothyroidism"],
+        allergies=["codeine"],
+        medications=[
+            Medication(id="med_8", name="Levothyroxine", ingredient="levothyroxine",
+                       dose="75 mcg", schedule="every morning"),
+            Medication(id="med_9", name="Zopiclone", ingredient="zolpidem",
+                       dose="3.75 mg", schedule="at night"),
+        ],
+        caregivers=[
+            Caregiver(
+                id="cg_luc",
+                name="Luc Dubois",
+                relationship="son",
+                phone_e164="+16175550163",
+                preferred_language="fr",
+                linq_thread_id="thread_dubois_family",
+            )
+        ],
+        consent={"share_with:cg_luc": True},
+    )
+
+
 # Rosa's fourteen days. Days are counted backwards from today; the script is
 # written so dizziness and poor appetite climb in the second week, which is what
 # the baseline evidence card picks up during the demo.
@@ -147,6 +178,13 @@ CHEN_SCRIPT: list[tuple[int, str, str]] = [
     (5, "zh", "有点头晕，休息后好了。"),
     (2, "zh", "背痛，不严重。"),
     (0, "zh", "今天还好。"),
+]
+
+HENRIETTE_SCRIPT: list[tuple[int, str, str]] = [
+    (10, "fr", "Tout va bien, j'ai juste un peu mal au dos."),
+    (6, "fr", "J'ai un peu de vertige le matin, ca passe."),
+    (3, "fr", "Je n'ai pas faim et j'ai la tete qui tourne."),
+    (1, "fr", "Je n'ai pas dormi, et toujours un peu de vertige."),
 ]
 
 WALTER_SCRIPT: list[tuple[int, str, str]] = [
@@ -229,6 +267,7 @@ def seed(store: Store) -> Store:
         (_senior_rosa(), ROSA_SCRIPT),
         (_senior_chen(), CHEN_SCRIPT),
         (_senior_walter(), WALTER_SCRIPT),
+        (_senior_henriette(), HENRIETTE_SCRIPT),
     ):
         store.put_senior(senior)
         _seed_history(store, senior, script)

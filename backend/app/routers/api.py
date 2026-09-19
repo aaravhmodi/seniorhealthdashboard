@@ -403,6 +403,22 @@ def demo_scenarios() -> list[dict]:
             "expect_level": 3,
         },
         {
+            "name": "Henriette -- French intake, fall with head strike",
+            "senior_id": "sen_henriette",
+            "language": "fr",
+            "source": "voice",
+            "text": "Je suis tombee dans la cuisine et je me suis cogne la tete.",
+            "expect_level": 3,
+        },
+        {
+            "name": "Henriette -- quiet French day",
+            "senior_id": "sen_henriette",
+            "language": "fr",
+            "source": "voice",
+            "text": "Tout va bien aujourd'hui, juste un peu mal au dos.",
+            "expect_level": 1,
+        },
+        {
             "name": "Wei -- new confusion with urinary symptoms (UTI delirium)",
             "senior_id": "sen_chen",
             "language": "en",

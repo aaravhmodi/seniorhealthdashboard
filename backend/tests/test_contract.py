@@ -23,7 +23,7 @@ def client():
 def test_health_and_contract(client):
     health = client.get("/healthz").json()
     assert health["status"] == "ok"
-    assert health["seeded_seniors"] == 3
+    assert health["seeded_seniors"] == 4
 
     contract = client.get("/contract").json()
     assert contract["contract_version"] == "0.1.0"
@@ -32,7 +32,9 @@ def test_health_and_contract(client):
 
 def test_seed_history_is_present(client):
     seniors = client.get("/seniors").json()
-    assert {s["id"] for s in seniors} == {"sen_rosa", "sen_chen", "sen_walter"}
+    assert {s["id"] for s in seniors} == {
+        "sen_rosa", "sen_chen", "sen_walter", "sen_henriette"
+    }
 
     rosa = client.get("/seniors/sen_rosa").json()
     assert rosa["preferred_language"] == "es"
@@ -213,7 +215,12 @@ def test_demo_scenarios_land_on_their_advertised_level(client):
 # -- language --------------------------------------------------------------
 @pytest.mark.parametrize(
     "senior_id,marker",
-    [("sen_rosa", "urgencias"), ("sen_chen", "急诊"), ("sen_walter", "emergency")],
+    [
+        ("sen_rosa", "urgencias"),
+        ("sen_chen", "急诊"),
+        ("sen_walter", "emergency"),
+        ("sen_henriette", "urgences"),
+    ],
 )
 def test_explanation_is_in_the_seniors_language(client, senior_id, marker):
     ev = client.post(
