@@ -87,6 +87,15 @@ def test_a_good_generation_is_used(with_key, monkeypatch):
     assert "urgencias" in result.value
 
 
+def test_spanish_emergencias_is_an_accepted_level_three_destination(with_key, monkeypatch):
+    fake_chat(monkeypatch, "Vaya ahora a la sala de emergencias. No maneje usted.")
+    result = llm.explain(
+        level=ActionLevel.GO_TO_ER, language="es", senior_name="Rosa Mendez",
+        flags=[CARDIAC], evidence=[], template_fallback="TEMPLATE",
+    )
+    assert result.used_model is True
+
+
 # -- the model misbehaves, one failure mode per test ----------------------
 def test_elderspeak_is_rejected(with_key, monkeypatch):
     fake_chat(monkeypatch, "Okay sweetie! Let's take our medicine and go to urgencias!")
