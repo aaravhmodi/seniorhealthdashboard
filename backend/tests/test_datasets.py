@@ -161,6 +161,57 @@ def test_neiss_splits_falls_by_anticoagulant(warehouse_at, tmp_path):
     assert on["rate_percent"] > off["rate_percent"], "this is the clinical point"
 
 
+def test_neiss_fallback_aggregates_cells_before_applying_minimum_n(
+    warehouse_at, tmp_path
+):
+    """Real anticoagulant cases fragment into thin diagnosis/body-part cells."""
+    rows = []
+    for body_part in (75, 76):
+        rows += [
+            (80, body_part, 62, 4, 100, "80YOF FELL ON COUMADIN")
+            for _ in range(20)
+        ]
+    neiss.load([write_neiss(tmp_path, rows)], min_n=30)
+
+    # Neither individual rate cell survives min_n=30, but the requested
+    # anticoagulant cohort has 40 cases and is safe to quote.
+    con = warehouse.connect(read_only=True)
+    try:
+        assert con.execute(
+            "SELECT count(*) FROM neiss_senior_rates WHERE on_anticoagulant"
+        ).fetchone()[0] == 0
+    finally:
+        con.close()
+    result = lookup.fall_admission_rate(True)
+    assert result is not None
+    assert result["n"] == 40
+
+
+def test_neiss_loads_the_official_xlsx_schema(warehouse_at, tmp_path):
+    from openpyxl import Workbook
+
+    path = tmp_path / "neiss2025.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "NEISS_2025"
+    sheet.append([
+        "CPSC_Case_Number", "Treatment_Date", "Age", "Sex", "Body_Part",
+        "Diagnosis", "Disposition", "Weight", "Narrative_1",
+    ])
+    for case_id in range(40):
+        sheet.append([
+            case_id, "2025-01-01", 80, 2, 75, 62,
+            4 if case_id < 30 else 1, 100.0,
+            "80YOF FELL DOWN STAIRS AND STRUCK HEAD ON COUMADIN",
+        ])
+    workbook.save(path)
+
+    assert neiss.load([str(path)], min_n=30) == 1
+    result = lookup.fall_admission_rate(True)
+    assert result["n"] == 40
+    assert result["rate_percent"] == pytest.approx(75.0, abs=0.1)
+
+
 # -- FAERS -----------------------------------------------------------------
 def write_faers_quarter(tmp_path, demo, drug, reac, quarter="24Q1"):
     """Files shaped like a real unzipped FAERS ASCII quarter.

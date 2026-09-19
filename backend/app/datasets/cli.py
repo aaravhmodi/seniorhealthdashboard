@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, help_text in (
         ("nhamcs", "CDC NHAMCS ED public-use CSVs"),
-        ("neiss", "CPSC NEISS injury CSVs"),
+        ("neiss", "CPSC NEISS injury CSV/XLSX files"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("paths", nargs="+")

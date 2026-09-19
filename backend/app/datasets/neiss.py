@@ -34,7 +34,11 @@ Usage:
 """
 from __future__ import annotations
 
+import csv
 import logging
+import pathlib
+import tempfile
+from contextlib import contextmanager
 
 from .narratives import sql_flag, sql_mechanism
 from .narratives import ANTICOAGULANTS, HEAD_STRIKE, LOSS_OF_CONSCIOUSNESS
@@ -63,17 +67,54 @@ BODY_PART_LABELS = {
 NARRATIVE_LIMIT = 5000
 
 
+@contextmanager
+def _csv_inputs(paths: list[str]):
+    """Yield CSV paths, converting official CPSC XLSX exports when needed."""
+    with tempfile.TemporaryDirectory(prefix="neiss_") as temp_dir:
+        converted: list[str] = []
+        for index, source in enumerate(paths):
+            path = pathlib.Path(source)
+            if path.suffix.lower() not in (".xlsx", ".xlsm"):
+                converted.append(str(path))
+                continue
+
+            from openpyxl import load_workbook
+
+            target = pathlib.Path(temp_dir) / f"neiss_{index}.csv"
+            workbook = load_workbook(path, read_only=True, data_only=True)
+            sheet = workbook[workbook.sheetnames[0]]
+            with target.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                empty_run = 0
+                for row in sheet.iter_rows(values_only=True):
+                    values = list(row)
+                    if not any(value is not None and value != "" for value in values):
+                        empty_run += 1
+                        # Official workbooks may format every Excel row. Stop
+                        # after the data rather than emitting 600k blank lines.
+                        if empty_run >= 100:
+                            break
+                        continue
+                    empty_run = 0
+                    writer.writerow(values)
+            workbook.close()
+            converted.append(str(target))
+            log.info("converted official workbook %s", path)
+        yield converted
+
+
 def load(
     paths: list[str], min_n: int = 30, narrative_limit: int = NARRATIVE_LIMIT
 ) -> int:
     con = connect()
     try:
-        files = "[" + ", ".join(f"'{p}'" for p in paths) + "]"
-        con.execute(
-            f"CREATE OR REPLACE VIEW neiss_raw AS "
-            f"SELECT * FROM read_csv_auto({files}, union_by_name=true, "
-            f"ignore_errors=true, sample_size=-1)"
-        )
+        with _csv_inputs(paths) as csv_paths:
+            files = "[" + ", ".join(f"'{pathlib.Path(p).as_posix()}'" for p in csv_paths) + "]"
+            con.execute(
+                f"CREATE OR REPLACE TABLE neiss_raw AS "
+                f"SELECT * FROM read_csv_auto({files}, union_by_name=true, "
+                f"ignore_errors=true, sample_size=-1)"
+            )
 
         columns = {
             row[0].lower(): row[0]

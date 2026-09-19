@@ -39,7 +39,7 @@ mkdir -p backend/data/raw/{nhamcs,neiss,faers}
 cd backend
 python -m app.datasets.cli status
 python -m app.datasets.cli nhamcs data/raw/nhamcs/*.csv
-python -m app.datasets.cli neiss  data/raw/neiss/*.csv
+python -m app.datasets.cli neiss  data/raw/neiss/neiss2025.xlsx
 python -m app.datasets.cli faers  data/raw/faers/2024q1 data/raw/faers/2024q2
 ```
 

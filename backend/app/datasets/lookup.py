@@ -16,7 +16,7 @@ from functools import lru_cache
 from typing import Any
 
 from . import nhamcs
-from .warehouse import connect, exists, table_exists
+from .warehouse import connect, exists, table_exists, wilson
 
 log = logging.getLogger(__name__)
 
@@ -325,11 +325,15 @@ def fall_outcome(
 
     rows = _query(
         f"""
-        SELECT sum(n)                            AS n,
-               sum(rate * n) / nullif(sum(n), 0) AS rate,
-               min(ci_low), max(ci_high)
-        FROM neiss_senior_rates
-        {where}
+        WITH agg AS (
+            SELECT count(*) AS n,
+                   sum(wt * admitted) / nullif(sum(wt), 0) AS rate
+            FROM neiss_senior_cases
+            {where}
+        )
+        SELECT n, rate, {wilson('rate', 'n')}
+        FROM agg
+        WHERE n >= 30
         """,
         params,
     )
@@ -352,27 +356,10 @@ def fall_outcome(
 @lru_cache(maxsize=256)
 def fall_admission_rate(on_anticoagulant: bool, body_part: str = "head") -> dict | None:
     """NEISS: hospitalisation rate after a fall, split by anticoagulant mention."""
-    rows = _query(
-        """
-        SELECT sum(n)                            AS n,
-               sum(rate * n) / nullif(sum(n), 0) AS rate,
-               min(ci_low), max(ci_high)
-        FROM neiss_senior_rates
-        WHERE on_anticoagulant = ?
-        """,
-        [on_anticoagulant],
-    )
-    if not rows or not rows[0][0]:
+    result = fall_outcome(on_anticoagulant=on_anticoagulant)
+    if not result:
         return None
-    n, rate, ci_low, ci_high = rows[0]
-    return {
-        "n": int(n),
-        "rate_percent": round(float(rate) * 100, 1),
-        "ci_low": round(float(ci_low) * 100, 1),
-        "ci_high": round(float(ci_high) * 100, 1),
-        "on_anticoagulant": on_anticoagulant,
-        "source": "NEISS injury surveillance, ages 65+",
-    }
+    return {**result, "on_anticoagulant": on_anticoagulant}
 
 
 def clear_cache() -> None:
