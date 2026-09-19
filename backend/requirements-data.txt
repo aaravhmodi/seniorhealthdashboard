@@ -1,0 +1,6 @@
+# Loading the raw datasets. Not needed to *run* the app, which only reads the
+# finished DuckDB file -- so the Docker image stays slim.
+-r requirements.txt
+
+# NHAMCS ships as Stata/SAS/SPSS; pandas reads the .dta once into a slim CSV.
+pandas>=2.2

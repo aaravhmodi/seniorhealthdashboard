@@ -7,7 +7,7 @@ to install, nothing to keep running during the demo.
 
 Tables this package builds (all `senior_*` are filtered to ages 65+):
 
-    nhamcs_senior_rates   reason-for-visit  -> admission/transfer rate, n, CI
+    nhamcs_senior_rates   symptom + age band -> admission/transfer rate, n, CI
     neiss_senior_rates    injury + body part -> hospitalised rate, n, CI
     faers_signals         ingredient + event -> ROR, PRR, n, CI
     faers_pair_signals    ingredient pair + event -> ROR, n

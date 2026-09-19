@@ -62,25 +62,23 @@ def _query(sql: str, params: list[Any]) -> list[tuple]:
 @lru_cache(maxsize=512)
 def admission_rate(symptom_label: str, age: int) -> dict | None:
     """NHAMCS: share of similar ED visits that ended in admission or transfer."""
-    codes = nhamcs.SYMPTOM_TO_RFV.get(symptom_label)
-    if not codes:
+    if symptom_label not in nhamcs.SYMPTOM_TO_RFV:
         return None
-    band = nhamcs.age_band(age)
-    placeholders = ", ".join("?" for _ in codes)
+    # This patient's age band when it has enough visits to quote, otherwise
+    # every senior -- a wider cohort beats a MOCK card, and the title says which.
     rows = _query(
-        f"""
-        SELECT sum(n)                                   AS n,
-               sum(rate * n) / nullif(sum(n), 0)        AS rate,
-               min(ci_low)                              AS ci_low,
-               max(ci_high)                             AS ci_high
+        """
+        SELECT n, rate, ci_low, ci_high, age_band
         FROM nhamcs_senior_rates
-        WHERE reason_code IN ({placeholders}) AND age_band = ?
+        WHERE symptom = ? AND age_band IN (?, '65+')
+        ORDER BY age_band = '65+'
+        LIMIT 1
         """,
-        [*codes, band],
+        [symptom_label, nhamcs.age_band(age)],
     )
     if not rows or not rows[0][0]:
         return None
-    n, rate, ci_low, ci_high = rows[0]
+    n, rate, ci_low, ci_high, band = rows[0]
     return {
         "n": int(n),
         "rate_percent": round(float(rate) * 100, 1),

@@ -84,11 +84,14 @@ def test_nhamcs_builds_weighted_rates_with_intervals(warehouse_at, tmp_path):
     # 40 chest-pain visits in 75-84: 30 admitted (code 4), 10 sent home (1).
     rows = [(78, 1, "1050", 4, 1000) for _ in range(30)]
     rows += [(78, 1, "1050", 1, 1000) for _ in range(10)]
-    # A thin cell that must be dropped by min_n.
-    rows += [(80, 2, "1245", 4, 1000) for _ in range(5)]
+    # A thin cell that must be dropped by min_n: 5 chest-pain visits at 68.
+    rows += [(68, 2, "1050", 4, 1000) for _ in range(5)]
 
     cells = nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=30)
-    assert cells == 1, "the 5-visit cell is too thin to quote"
+    assert cells == 2, "75-84 and all-65+ survive; the 5-visit 65-74 cell does not"
+    assert lookup.admission_rate("chest pain", 68)["age_band"] == "65+", (
+        "a thin band falls back to every senior rather than to MOCK"
+    )
 
     result = lookup.admission_rate("chest pain", 78)
     assert result is not None
@@ -121,6 +124,85 @@ def test_a_missing_column_fails_loudly(warehouse_at, tmp_path):
     bad.write_text("AGE,SEX\n70,1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="missing"):
         nhamcs.load([str(bad)])
+
+
+def write_public_use(tmp_path, rows, name="ed2021.csv"):
+    """The layout the CDC actually ships (checked against ED 2021/2022):
+    a 5-digit RFV1, its 4-digit RFV13D, one 0/1 flag per disposition, and an
+    ADISP that is -7 ("not applicable") for almost everyone."""
+    path = tmp_path / name
+    lines = ["AGE,SEX,YEAR,RFV1,RFV13D,PATWT,ADMITHOS,TRANOTH,OBSHOS,OBSDIS,DIEDED,ADISP"]
+    for age, rfv1, admit, tran, obs_admit, obs_home, died, w in rows:
+        lines.append(
+            f"{age},1,2021,{rfv1},{rfv1 // 10},{w},{admit},{tran},{obs_admit},"
+            f"{obs_home},{died},-7"
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return str(path)
+
+
+def test_nhamcs_reads_the_real_public_use_layout(warehouse_at, tmp_path):
+    """The first version keyed on RFV1 with 4-digit codes and read ADISP as the
+    outcome. On the real files that matched nothing and every card stayed MOCK
+    -- with no error anywhere."""
+    rows = [(80, 14150, 1, 0, 0, 0, 0, 1000) for _ in range(20)]   # admitted
+    rows += [(80, 14150, 0, 1, 0, 0, 0, 1000) for _ in range(5)]   # transferred
+    rows += [(80, 14150, 0, 0, 1, 0, 0, 1000) for _ in range(5)]   # observed, stayed
+    rows += [(80, 14150, 0, 0, 0, 1, 0, 1000) for _ in range(10)]  # observed, went home
+    rows += [(80, 14150, 0, 0, 0, 0, 0, 1000) for _ in range(20)]  # home
+    nhamcs.load([write_public_use(tmp_path, rows)], min_n=30)
+
+    result = lookup.admission_rate("shortness of breath", 80)
+    assert result is not None, "RFV13D 1415 must match the symptom map"
+    assert result["n"] == 60
+    # 30 of 60 not sent home. Observation-then-discharge counts as home.
+    assert result["rate_percent"] == pytest.approx(50.0, abs=0.1)
+
+
+def test_a_five_digit_rfv1_alone_is_normalised(warehouse_at, tmp_path):
+    path = tmp_path / "rfv1_only.csv"
+    lines = ["AGE,RFV1,PATWT,ADMITHOS"]
+    lines += [f"70,10500,1000,{1 if i < 10 else 0}" for i in range(40)]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    nhamcs.load([str(path)], min_n=30)
+
+    result = lookup.admission_rate("chest pain", 70)
+    assert result is not None and result["n"] == 40
+    assert result["rate_percent"] == pytest.approx(25.0, abs=0.1)
+
+
+def test_every_symptom_we_extract_has_a_reason_code_except_fall():
+    """A symptom with no code silently shows a MOCK card forever. Fall is the
+    exception on purpose: the classification has no fall code, NEISS answers it."""
+    from app.extraction import LEXICON
+
+    missing = set(LEXICON) - set(nhamcs.SYMPTOM_TO_RFV) - {"fall"}
+    assert not missing, f"no NHAMCS reason code for {sorted(missing)}"
+    assert "fall" not in nhamcs.SYMPTOM_TO_RFV
+    all_codes = [c for codes in nhamcs.SYMPTOM_TO_RFV.values() for c in codes]
+    assert all(len(c) == 4 and c.isdigit() for c in all_codes)
+    # 1905 used to be both "back pain" and "swelling legs": one visit counted
+    # as two symptoms.
+    assert len(all_codes) == len(set(all_codes)), "a code maps to two symptoms"
+
+
+def test_stata_files_are_converted_and_loaded(warehouse_at, tmp_path):
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({
+        "AGE": [82] * 40, "SEX": [2] * 40, "YEAR": [2022] * 40,
+        "RFV1": [12250] * 40, "RFV13D": [1225] * 40, "PATWT": [5000.0] * 40,
+        "ADMITHOS": [1] * 8 + [0] * 32, "TRANOTH": [0] * 40, "OBSHOS": [0] * 40,
+        "DIEDED": [0] * 40, "UNUSED_COLUMN": [9] * 40,
+    })
+    dta = tmp_path / "ed2022-stata.dta"
+    frame.to_stata(dta, write_index=False)
+
+    nhamcs.load([str(dta)], min_n=30)
+    result = lookup.admission_rate("dizziness", 82)
+    assert result["rate_percent"] == pytest.approx(20.0, abs=0.1)
+
+    slim = (tmp_path / "ed2022-stata.slim.csv").read_text().splitlines()[0]
+    assert "UNUSED_COLUMN" not in slim, "only the columns we use are kept"
 
 
 def test_real_nhamcs_rates_replace_the_mock_card(warehouse_at, tmp_path, client):
