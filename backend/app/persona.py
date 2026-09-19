@@ -113,7 +113,14 @@ STYLE_RULES: tuple[str, ...] = (
     "Never promise that something is nothing. If unsure, say you are being careful.",
     "No emoji, no exclamation marks, no cheerleading.",
     "Say numbers plainly: 'nine one one', not '911'.",
-    "Close by inviting them to say it back, so a misunderstanding surfaces.",
+)
+
+# Teach-back belongs with a plan, not with "nothing to do today" -- asking
+# someone to repeat back that nothing is wrong is the kind of hollow ritual
+# that makes a system feel like a form. Levels 2 and above only.
+TEACH_BACK_RULE = (
+    "Close by asking them to say the plan back to you, so a misunderstanding "
+    "surfaces."
 )
 
 # Patterns that mean we slipped into elderspeak. Tested, not aspirational.

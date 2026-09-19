@@ -24,12 +24,19 @@ import httpx
 
 from .config import get_settings
 from .extraction import extract as lexicon_extract
-from .persona import LANGUAGE_NAMES, STYLE_RULES, lint, system_prompt
+from .persona import (
+    LANGUAGE_NAMES,
+    STYLE_RULES,
+    TEACH_BACK_RULE,
+    lint,
+    system_prompt,
+)
 from .retrieval import RetrievedContext, build_context
 from .schemas import ActionLevel, EvidenceCard, RedFlag, Symptom
 
 log = logging.getLogger(__name__)
 
+NEWLINE = "\n"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 TIMEOUT_S = 25.0  # reasoning models are slower; the fallback covers a miss
 
@@ -177,7 +184,8 @@ def extract_vitals_and_meds(text: str | None, language: str = "en") -> dict:
 # Explanation
 # --------------------------------------------------------------------------
 LEVEL_INSTRUCTION = {
-    1: "Tell them nothing here needs a call today.",
+    1: ("Tell them nothing here needs a call today. One or two sentences. "
+        "There is no plan to remember, so do not ask them to repeat anything."),
     2: "Tell them to call their clinic or pharmacist today. Say it is not an emergency.",
     3: "Tell them to go to the emergency department now, and not to drive themselves.",
     4: "Tell them to call nine one one now and stay where they are.",
@@ -219,7 +227,9 @@ def explain(
                     f"What triggered it: {reasons}\n"
                     f"Supporting facts you may refer to:\n{facts}\n"
                     f"Retrieved context you may refer to:\n{block}\n\n"
-                    f"Write the message. Reply only in "
+                    # Teach-back only where there is a plan to remember.
+                    + (TEACH_BACK_RULE + NEWLINE if int(level) >= 2 else "")
+                    + f"Write the message. Reply only in "
                     f"{LANGUAGE_NAMES.get(language, 'English')}. "
                     f"Do not add anything that is not above."
                 ),
