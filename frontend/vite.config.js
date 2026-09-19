@@ -4,6 +4,6 @@ export default defineConfig({
     plugins: [react()],
     server: {
         port: 5173,
-        proxy: { '/api': { target: process.env.VITE_API_ORIGIN || 'http://localhost:8000', changeOrigin: true } },
+        proxy: { '/api': { target: process.env.VITE_API_ORIGIN || 'http://localhost:8000', changeOrigin: true, rewrite: function (path) { return path.replace(/^\/api/, ''); } } },
     },
 });

@@ -2,7 +2,8 @@ import type { CheckIn, CheckInResponse, Senior } from './types'
 
 const base = import.meta.env.VITE_API_ORIGIN || ''
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${base}/api${path}`, { headers: { 'Content-Type': 'application/json', ...init?.headers }, ...init })
+  const origin = base || '/api'
+  const response = await fetch(`${origin}${path}`, { headers: { 'Content-Type': 'application/json', ...init?.headers }, ...init })
   if (!response.ok) throw new Error(`Request failed (${response.status})`)
   return response.json() as Promise<T>
 }
