@@ -58,11 +58,24 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .topbar .language-picker select { min-height: 0; padding: 0; color: inherit; font-size: inherit; font-weight: inherit; }
 .topbar .profile-button, .topbar .text-button { font-size: .95rem; white-space: nowrap; }
 .sign-in-box .create-profile-button { margin-top: 1.5rem; }
- .why-level-button { border: 1px solid #b9cfc4; background: #f4f8f5; color: #276b51; border-radius: 8px; padding: .55rem .8rem; font-weight: 700; cursor: pointer; }
- .why-level-panel { grid-column: 1 / -1; margin-top: .7rem; padding-top: 1rem; border-top: 1px solid #e1ebe3; color: #385d4f; }
- .why-level-panel h3 { font-size: .9rem; margin: 1rem 0 .45rem; }
- .why-level-panel ul { margin: .25rem 0; padding-left: 1.2rem; }
- .evidence-list { display: grid; gap: .65rem; }
- .evidence-item { padding: .8rem; border: 1px solid #dce8df; border-radius: 9px; background: #fbfdfb; }
- .evidence-item p { margin: .3rem 0; font-size: .86rem; line-height: 1.45; }
- .evidence-item span, .evidence-item small { display: block; color: #547568; font-size: .78rem; margin-top: .3rem; }
+
+/* Profile setup shows one calm, focused step at a time. */
+.signup-progress { margin: 1.6rem 0 -1rem; color: #557367; font-size: 1rem; }
+.signup-progress strong { color: #234b3d; }
+.profile-form section[hidden] { display: none; }
+.signup-actions { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: .35rem; }
+.signup-actions .secondary-button { margin: 0; min-width: 116px; }
+.signup-actions .primary-button { min-width: 150px; }
+@media (max-width: 520px) { .signup-actions { flex-direction: column-reverse; align-items: stretch; }.signup-actions .secondary-button, .signup-actions .primary-button { width: 100%; } }
+
+/* Keep the first signup step close to the header without crowding it. */
+.onboarding-content { padding-top: 1.75rem; }
+.onboarding-content > h1 { margin-bottom: .35rem; }
+.profile-form { margin-top: 1.25rem; }
+.signup-progress { margin-top: .25rem; }
+
+/* Keep a history entry easy to scan: symptom, date, then the note. */
+.history-record { display: grid; grid-template-columns: 160px 185px minmax(0, 1fr); align-items: start; gap: 0 1rem; }
+.history-record > strong { grid-column: 1; }.history-record > p:first-of-type { grid-column: 2; }.history-record > p:last-of-type { grid-column: 3; }
+.history-record > p { margin-top: 0; }
+@media (max-width: 720px) { .history-record { grid-template-columns: 1fr; gap: .3rem; }.history-record > strong, .history-record > p:first-of-type, .history-record > p:last-of-type { grid-column: 1; } }

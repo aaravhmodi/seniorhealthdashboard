@@ -25,3 +25,11 @@ Linq notifications should remain backend-owned. Once an evaluation reaches the c
 ## Languages
 
 The Vite frontend uses `i18next` and `react-i18next` (rather than `next-translate`, which requires Next.js). Supported UI locales are English, Spanish, Portuguese, Simplified Chinese, and Hindi. FastAPI/voice should return a BCP-47 language code on every check-in; an unsupported code must fall back to English and be shown to the user as unavailable.
+
+## Supabase Auth setup
+
+1. Create a Supabase project and enable Email auth.
+2. Copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY`.
+3. In Supabase Auth settings, add the local and deployed frontend URLs as redirect URLs.
+
+The frontend API client automatically sends the current Supabase access token as an `Authorization: Bearer` header. FastAPI must verify that token before a real deployment treats an API request as authenticated.
