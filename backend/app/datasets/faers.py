@@ -115,7 +115,12 @@ def _require_columns(con, view: str, needed: tuple[str, ...], hint: str) -> None
 def _quarter_tables(con, folder: pathlib.Path) -> None:
     """Register DEMO/DRUG/REAC for one quarter folder as views."""
     for kind in QUARTER_FILES:
-        matches = sorted(folder.glob(f"{kind}*.txt")) + sorted(folder.glob(f"{kind.lower()}*.txt"))
+        # FDA's official ZIPs currently place the extract files in an ASCII/
+        # subdirectory.  Older/manual extracts often put them directly in the
+        # quarter directory, so search recursively and support both layouts.
+        matches = sorted(folder.rglob(f"{kind}*.txt")) + sorted(
+            folder.rglob(f"{kind.lower()}*.txt")
+        )
         if not matches:
             raise FileNotFoundError(
                 f"no {kind}*.txt in {folder}. Unzip the FAERS ASCII quarter so "

@@ -355,6 +355,29 @@ def test_an_unzipped_quarter_with_missing_files_says_so(warehouse_at, tmp_path):
         faers.load([str(empty)])
 
 
+def test_faers_accepts_the_official_ascii_subdirectory(warehouse_at, tmp_path):
+    """The FDA ZIP extracts DEMO/DRUG/REAC beneath ASCII/, not at its root."""
+    root = tmp_path / "faers24q1"
+    ascii_dir = root / "ASCII"
+    ascii_dir.mkdir(parents=True)
+    (ascii_dir / "DEMO24Q1.txt").write_text(
+        "primaryid$caseid$fda_dt$age$age_cod\n1$1$20240101$80$YR",
+        encoding="utf-8",
+    )
+    (ascii_dir / "DRUG24Q1.txt").write_text(
+        "primaryid$drug_seq$role_cod$drugname$prod_ai\n"
+        "1$1$PS$COUMADIN$WARFARIN SODIUM",
+        encoding="utf-8",
+    )
+    (ascii_dir / "REAC24Q1.txt").write_text(
+        "primaryid$pt\n1$Haemorrhage", encoding="utf-8"
+    )
+
+    counts = faers.load([str(root)], min_reports=1)
+    assert counts["senior_cases"] == 1
+    assert lookup.resolve_ingredient("warfarin") == "warfarin sodium"
+
+
 # -- status ----------------------------------------------------------------
 def test_status_lists_what_was_loaded(warehouse_at, tmp_path, client):
     rows = [(78, 1, "1050", 4, 1000) for _ in range(40)]
