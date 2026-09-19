@@ -83,6 +83,7 @@ def evaluate(
     senior: Senior,
     baseline: BaselineSummary,
     previous_level: ActionLevel | None = None,
+    language: str | None = None,
 ) -> Evaluation:
     flags = evaluate_rules(checkin, senior)
     floor = rule_floor(flags)
@@ -119,7 +120,7 @@ def evaluate(
 
     explanation, explanation_en = render_explanation(
         level=level,
-        language=senior.preferred_language,
+        language=language or senior.preferred_language,
         symptoms=[s.label for s in checkin.symptoms],
         flags=flags,
         evidence=evidence,

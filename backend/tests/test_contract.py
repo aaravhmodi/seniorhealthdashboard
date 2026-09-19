@@ -215,16 +215,8 @@ def test_demo_scenarios_land_on_their_advertised_level(client):
 
 
 # -- language --------------------------------------------------------------
-@pytest.mark.parametrize(
-    "senior_id,marker",
-    [
-        ("sen_rosa", "urgencias"),
-        ("sen_chen", "急诊"),
-        ("sen_walter", "emergency"),
-        ("sen_henriette", "urgences"),
-    ],
-)
-def test_explanation_is_in_the_seniors_language(client, senior_id, marker):
+@pytest.mark.parametrize("senior_id", ["sen_rosa", "sen_chen", "sen_walter", "sen_henriette"])
+def test_explanation_follows_submitted_language(client, senior_id):
     ev = client.post(
         "/checkins",
         json={
@@ -234,7 +226,7 @@ def test_explanation_is_in_the_seniors_language(client, senior_id, marker):
         },
     ).json()["evaluation"]
 
-    assert marker in ev["explanation"]
+    assert "emergency" in ev["explanation"]
     assert "emergency department" in ev["explanation_en"], "clinician view stays English"
 
 

@@ -172,7 +172,8 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
     previous = store.latest_evaluation(senior.id)
     previous_level = previous.level if previous else None
     evaluation = evaluate(
-        checkin, senior, store.baseline(senior.id), previous_level=previous_level
+        checkin, senior, store.baseline(senior.id), previous_level=previous_level,
+        language=language,
     )
     context = retrieval.build_context(
         query=checkin.raw_text or "daily check-in",
@@ -181,7 +182,7 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
     )
     phrased = llm.explain(
         level=evaluation.level,
-        language=senior.preferred_language,
+        language=language,
         senior_name=senior.display_name,
         flags=evaluation.red_flags,
         evidence=evaluation.evidence,
