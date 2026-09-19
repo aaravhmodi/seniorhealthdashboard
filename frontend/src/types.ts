@@ -6,7 +6,7 @@ export interface Appointment { id: string; title: string; date?: string; locatio
 export interface CarePlan { routines: string[]; instructions: string[]; appointments: Appointment[] }
 export interface Senior {
   id: string; display_name: string; date_of_birth: string; age: number; preferred_language: string
-  phone_e164?: string; consent?: Record<string, boolean>; conditions: string[]; allergies: string[]; medications: Medication[]; caregivers?: Caregiver[]
+  gender?: string; phone_e164?: string; consent?: Record<string, boolean>; conditions: string[]; allergies: string[]; medications: Medication[]; caregivers?: Caregiver[]
 }
 export interface Symptom { label: string; severity?: number; onset?: string; is_new?: boolean }
 export interface CheckIn { id: string; created_at: string; raw_text?: string; symptoms: Symptom[]; source: string }
