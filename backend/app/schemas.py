@@ -46,6 +46,7 @@ class EvidenceKind(str, Enum):
     FAERS = "faers"        # drug adverse-event signal
     BASELINE = "baseline"  # change vs. this senior's own history
     RULE = "rule"          # deterministic red-flag rule fired
+    MODEL = "model"        # leakage-safe outcome model review flag
 
 
 class EventType(str, Enum):
@@ -192,6 +193,8 @@ class Evaluation(BaseModel):
     llm_used: bool = False
     llm_fallback_reason: Optional[str] = None
     context_citations: list[str] = []
+    model_risk: Optional[float] = None
+    under_triage: bool = False
 
 
 class NotificationReceipt(BaseModel):

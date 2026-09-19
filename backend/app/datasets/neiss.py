@@ -143,6 +143,11 @@ def load(
                     return columns[candidate.lower()]
             return None
 
+        treatment_date = maybe("treatment_date", "Treatment_Date")
+        sex = maybe("sex", "Sex")
+        location = maybe("location", "Location")
+        product = maybe("product_1", "product", "Product_1")
+
         narr1 = maybe("narrative", "narr1", "narrative1", "Narrative_1")
         narr2 = maybe("narr2", "narrative2", "Narrative_2")
         if narr1 is None:
@@ -161,6 +166,9 @@ def load(
         loc_flag = sql_flag(narrative, LOSS_OF_CONSCIOUSNESS)
         mechanism = sql_mechanism(narrative)
 
+        def expr_or_null(expression: str | None, cast: str = "VARCHAR") -> str:
+            return f"TRY_CAST({expression} AS {cast})" if expression else "NULL"
+
         con.execute(
             f"""
             CREATE OR REPLACE TABLE neiss_senior_cases AS
@@ -173,6 +181,10 @@ def load(
                 {loc_flag}                    AS loss_of_consciousness,
                 {mechanism}                   AS mechanism,
                 TRY_CAST({age} AS DOUBLE)     AS age,
+                {expr_or_null(treatment_date, 'DATE')} AS treatment_date,
+                {expr_or_null(sex)}            AS sex,
+                {expr_or_null(location)}       AS location,
+                {expr_or_null(product)}        AS product,
                 CASE WHEN TRY_CAST({age} AS DOUBLE) >= 85 THEN '85+'
                      WHEN TRY_CAST({age} AS DOUBLE) >= 75 THEN '75-84'
                      ELSE '65-74' END         AS age_band,

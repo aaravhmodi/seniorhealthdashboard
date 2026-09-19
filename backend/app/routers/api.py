@@ -634,16 +634,19 @@ def retrieval_reindex() -> dict:
     # Real NEISS cases, when the warehouse has them. Silently zero otherwise,
     # which is the same degradation story as the evidence cards.
     from ..datasets.lookup import cohort_rows, narrative_rows
+    from ..datasets import model as outcome_model
 
     cases = retrieval.ingest_neiss_narratives(narrative_rows())
     total += cases
     stats = retrieval.ingest_cohort_stats(cohort_rows())
     total += stats
+    model_metrics = outcome_model.refresh()
 
     return {
         "indexed_chunks": total,
         "neiss_cases": cases,
         "cohort_stats": stats,
+        "outcome_model": model_metrics,
         "embedder": type(retrieval.store.embedder).__name__,
     }
 
@@ -712,7 +715,13 @@ def datasets_status() -> dict:
     from ..datasets.lookup import available
     from ..datasets.warehouse import status
 
-    return {"warehouse": status(), "tables_available": available()}
+    from ..datasets import model as outcome_model
+
+    return {
+        "warehouse": status(),
+        "tables_available": available(),
+        "outcome_model": outcome_model.status(),
+    }
 
 
 @router.get("/events/recent", response_model=list[WSEvent], tags=["events"])

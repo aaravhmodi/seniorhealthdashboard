@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app import evidence
 from app.config import get_settings
 from app.datasets import faers, lookup, neiss, nhamcs, warehouse
+from app.datasets import model as outcome_model
 from app.main import app
 from app.schemas import CheckIn, CheckInSource, Symptom
 from app.store import now, store
@@ -210,6 +211,13 @@ def test_neiss_loads_the_official_xlsx_schema(warehouse_at, tmp_path):
     result = lookup.fall_admission_rate(True)
     assert result["n"] == 40
     assert result["rate_percent"] == pytest.approx(75.0, abs=0.1)
+
+
+def test_outcome_model_rejects_outcome_leakage():
+    with pytest.raises(ValueError, match="outcome leakage"):
+        outcome_model.validate_feature_columns(
+            [*outcome_model.FEATURE_COLUMNS, "disposition"]
+        )
 
 
 # -- FAERS -----------------------------------------------------------------

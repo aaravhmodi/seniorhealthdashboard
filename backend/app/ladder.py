@@ -11,6 +11,7 @@ extracts the symptoms; it never picks the level.
 from __future__ import annotations
 
 from .evidence import baseline_cards, faers_cards, neiss_cards
+from .datasets import model as outcome_model
 from .explain import render_explanation
 from .schemas import (
     ActionLevel,
@@ -104,6 +105,13 @@ def evaluate(
         level = ActionLevel.LOG
 
     confidence = _confidence(checkin, flags, evidence)
+    model_risk = outcome_model.predict(checkin, senior)
+    under_triage = False
+    model_result = outcome_model.card(checkin, senior, level)
+    if model_result:
+        model_card, model_risk = model_result
+        evidence.append(model_card)
+        under_triage = True
     escalated = False
     if confidence < 0.5 and int(level) < int(ActionLevel.GO_TO_ER):
         level = ActionLevel(int(level) + 1)
@@ -135,6 +143,10 @@ def evaluate(
         escalated_for_uncertainty=escalated,
         # A clinician confirms anything that sends someone to hospital, and
         # anything we escalated because we were unsure.
-        requires_human_review=int(level) >= int(ActionLevel.GO_TO_ER) or escalated,
+        requires_human_review=(
+            int(level) >= int(ActionLevel.GO_TO_ER) or escalated or under_triage
+        ),
         engine_version=ENGINE_VERSION,
+        model_risk=model_risk,
+        under_triage=under_triage,
     )
