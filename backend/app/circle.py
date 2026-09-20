@@ -24,6 +24,7 @@ messaged, if `senior.consent["share_with:<caregiver_id>"]` is true.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import timedelta
 from typing import Optional
@@ -48,6 +49,7 @@ from .store import new_id, now, store
 
 # Guards claiming an alert for escalation. See sweep_escalations().
 _escalation_lock = threading.Lock()
+log = logging.getLogger("carepath.circle")
 
 
 def detail_link(senior_id: str, evaluation_id: str | None = None) -> str:
@@ -256,10 +258,23 @@ async def raise_alert(
         message_id=result.message_id,
         notified=[chain[0].id],
         pending_order=[cg.id for cg in chain[1:]],
+        delivery="sent" if result.ok else "pending",
+        last_error=result.error,
     )
+    if not result.ok:
+        # Nobody heard this. Try again shortly rather than letting a thirty
+        # second outage swallow a level-3 alert entirely.
+        alert.next_retry_at = alert.created_at + timedelta(
+            seconds=settings.alert_retry_seconds
+        )
+        log.error(
+            "alert %s for %s failed to send: %s", alert.id, senior.id, result.error
+        )
     # Only rungs that need a human answer get an escalation clock. Level 1 is
-    # information; nobody should be woken up for not having read it.
-    if int(evaluation.level) >= int(ActionLevel.CALL_CLINIC):
+    # information; nobody should be woken up for not having read it. And the
+    # clock only starts once the message actually went: escalating for silence
+    # on a text that never arrived blames the family for our outage.
+    if result.ok and int(evaluation.level) >= int(ActionLevel.CALL_CLINIC):
         alert.escalate_after = alert.created_at + timedelta(
             minutes=settings.escalation_timeout_minutes / scale
         )
@@ -419,3 +434,87 @@ async def sweep_escalations() -> list[str]:
         await escalate(alert)
         fired.append(alert.id)
     return fired
+
+
+async def retry_failed_deliveries() -> list[str]:
+    """Re-send alerts that never made it out.
+
+    Acknowledgement and delivery are different failures and are tracked
+    separately: an alert nobody answered is a family that is not responding,
+    but an alert that never sent is us failing silently, which is worse. This
+    gives up after `alert_max_delivery_attempts` and marks the alert failed so
+    the dashboard can show it red rather than pretending it went.
+    """
+    settings = get_settings()
+    now_ts = now()
+    due = [
+        a for a in list(store.alerts.values())
+        if a.delivery == "pending" and a.next_retry_at and a.next_retry_at <= now_ts
+    ]
+    retried: list[str] = []
+
+    for alert in due:
+        senior = store.get_senior(alert.senior_id)
+        if not senior or alert.resolved:
+            alert.delivery = "failed"
+            store.alerts[alert.id] = alert
+            continue
+
+        # Claim before awaiting, so the background tick and a manual one do
+        # not both re-send the same alert.
+        alert.next_retry_at = None
+        alert.delivery_attempts += 1
+        store.alerts[alert.id] = alert
+
+        circle_state = store.circles.get(senior.id)
+        if circle_state and circle_state.chat_id:
+            result = await linq.send_to_chat(circle_state.chat_id, alert.body)
+        else:
+            first = next((c for c in senior.caregivers if c.id in alert.notified), None)
+            result = (
+                await linq.send_direct(first.phone_e164, alert.body)
+                if first else linq.LinqResult(ok=False, error="no caregiver to reach")
+            )
+
+        alert.last_error = result.error
+        if result.ok:
+            alert.delivery = "sent"
+            alert.message_id = result.message_id or alert.message_id
+            alert.chat_id = result.chat_id or alert.chat_id
+            # The escalation clock only starts once someone has actually been
+            # told; escalating for silence on a message that never arrived
+            # would blame the family for our outage.
+            if int(alert.level) >= int(ActionLevel.CALL_CLINIC) and not alert.acks:
+                scale = max(settings.followup_time_scale, 0.001)
+                alert.escalate_after = now() + timedelta(
+                    minutes=settings.escalation_timeout_minutes / scale
+                )
+            log.info("alert %s delivered on attempt %d", alert.id, alert.delivery_attempts)
+        elif alert.delivery_attempts >= settings.alert_max_delivery_attempts:
+            alert.delivery = "failed"
+            log.error(
+                "alert %s undeliverable after %d attempts: %s",
+                alert.id, alert.delivery_attempts, result.error,
+            )
+            store.add_timeline(
+                senior.id,
+                TimelineEntry(
+                    at=now(), type=EventType.ALERT_ESCALATED,
+                    evaluation_id=alert.evaluation_id, level=alert.level,
+                    summary="Alert could not be delivered to the family",
+                    detail={"alert_id": alert.id, "error": result.error},
+                ),
+            )
+            bus.publish(
+                EventType.ALERT_ESCALATED, senior.id,
+                {"alert_id": alert.id, "undeliverable": True},
+            )
+        else:
+            alert.next_retry_at = now() + timedelta(
+                seconds=settings.alert_retry_seconds * alert.delivery_attempts
+            )
+
+        store.alerts[alert.id] = alert
+        retried.append(alert.id)
+
+    return retried

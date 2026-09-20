@@ -381,6 +381,13 @@ class Alert(BaseModel):
     escalate_after: Optional[datetime] = None
     escalations: int = 0
     resolved: bool = False
+    # Delivery, tracked separately from acknowledgement. An alert we never
+    # managed to send is not an alert nobody answered -- it is worse, and the
+    # dashboard has to be able to tell the difference.
+    delivery: Literal["sent", "pending", "failed"] = "sent"
+    delivery_attempts: int = 1
+    next_retry_at: Optional[datetime] = None
+    last_error: Optional[str] = None
 
     @property
     def acknowledged(self) -> bool:

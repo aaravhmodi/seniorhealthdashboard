@@ -26,6 +26,7 @@ On stage nobody waits a day. `FOLLOWUP_TIME_SCALE` divides every interval, so
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import threading
 import unicodedata
@@ -70,6 +71,8 @@ PASS_THRESHOLD = 0.7
 claim_lock = threading.Lock()
 # How long a claimed job may sit un-delivered before it is retried.
 CLAIM_TIMEOUT_S = 60
+
+log = logging.getLogger("carepath.followup")
 
 
 # --------------------------------------------------------------------------
@@ -374,8 +377,13 @@ async def tick() -> dict:
     advance time by calling it directly instead of sleeping.
     """
     sent = [(await send_followup(job)).id for job in claim_due()]
+    redelivered = await circle.retry_failed_deliveries()
     escalated = await circle.sweep_escalations()
-    return {"followups_sent": sent, "alerts_escalated": escalated}
+    return {
+        "followups_sent": sent,
+        "alerts_redelivered": redelivered,
+        "alerts_escalated": escalated,
+    }
 
 
 async def scheduler(interval_s: float = 5.0) -> None:
@@ -384,11 +392,19 @@ async def scheduler(interval_s: float = 5.0) -> None:
     Every failure is swallowed and logged into the next tick: a scheduler that
     dies on one bad job takes every future follow-up with it.
     """
+    failures = 0
     while True:
         try:
-            await tick()
+            result = await tick()
+            if any(result.values()):
+                log.info("tick: %s", result)
+            failures = 0
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass
+            # Keep the loop alive -- a scheduler that dies on one bad job takes
+            # every future follow-up with it -- but never silently. A silent
+            # `except: pass` here is how a demo becomes unexplainable.
+            failures += 1
+            log.exception("scheduler tick failed (%d in a row)", failures)
         await asyncio.sleep(interval_s)

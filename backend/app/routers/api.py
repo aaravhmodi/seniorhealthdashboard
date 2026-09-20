@@ -568,6 +568,12 @@ async def linq_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="body is not JSON")
 
+    # Linq delivers at-least-once and retries a non-2xx for ~25 minutes, so the
+    # same event arriving twice is normal. Acknowledging twice is harmless;
+    # answering "where is Dad?" twice texts an anxious family twice.
+    if linq_events.already_handled(webhook_id):
+        return {"ok": True, "handled": False, "reason": "duplicate delivery"}
+
     payload = linq_events.normalize(envelope)
     if payload is None:
         return {"ok": True, "handled": False, "reason": "event not actionable"}

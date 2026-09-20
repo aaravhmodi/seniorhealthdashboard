@@ -12,6 +12,9 @@ one text is the single most-used thing this system does.
 """
 from __future__ import annotations
 
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -96,6 +99,12 @@ def normalize(payload: dict[str, Any]) -> Optional[LinqInbound]:
             return None
         chat = data.get("chat") or {}
         sender = data.get("sender_handle") or {}
+        # Never act on our own message coming back at us. Linq's rate-limit
+        # docs name self-replying webhook handlers as the usual cause of a
+        # 1007, and the failure mode is worse than a rate limit: two bots
+        # texting a family in a loop at three in the morning.
+        if sender.get("is_me") or data.get("direction") == "outbound":
+            return None
         return LinqInbound(
             thread_id=str(chat.get("id") or data.get("chat_id") or ""),
             from_phone_e164=str(sender.get("handle") or ""),
@@ -107,6 +116,8 @@ def normalize(payload: dict[str, Any]) -> Optional[LinqInbound]:
 
     if event == "reaction.added":
         sender = data.get("from_handle") or {}
+        if sender.get("is_me"):
+            return None  # our own tapback is not the family acknowledging
         return LinqInbound(
             thread_id=str(data.get("chat_id") or ""),
             from_phone_e164=str(sender.get("handle") or ""),
@@ -245,5 +256,47 @@ __all__ = [
     "answer_call_request",
     "answer_help",
     "is_ack_reaction",
+    "already_handled",
+    "forget_deliveries",
     "ActionLevel",
 ]
+
+
+# --------------------------------------------------------------------------
+# Replay protection
+# --------------------------------------------------------------------------
+# Linq delivers at-least-once and retries a non-2xx for about twenty-five
+# minutes. So the same event arrives more than once as a matter of course, not
+# as a fault. Acknowledging twice is harmless -- it is idempotent -- but
+# answering "where is Dad?" twice texts the family twice, and a system that
+# double-texts an anxious caregiver is one they mute.
+#
+# Bounded, in-memory, and keyed on the webhook id. Losing it on restart costs
+# at most one duplicate reply, which is the right trade against unbounded
+# growth in a process that is meant to stay up for a weekend.
+_SEEN_LIMIT = 2048
+_seen_ids: OrderedDict[str, float] = OrderedDict()
+_seen_lock = threading.Lock()
+
+
+def already_handled(webhook_id: str | None) -> bool:
+    """True when this exact delivery has been processed before.
+
+    Records the id as a side effect, so the caller checks once and acts.
+    """
+    if not webhook_id:
+        return False  # nothing to key on; better to act twice than never
+    with _seen_lock:
+        if webhook_id in _seen_ids:
+            _seen_ids.move_to_end(webhook_id)
+            return True
+        _seen_ids[webhook_id] = time.time()
+        while len(_seen_ids) > _SEEN_LIMIT:
+            _seen_ids.popitem(last=False)
+    return False
+
+
+def forget_deliveries() -> None:
+    """Test and demo-reset hook."""
+    with _seen_lock:
+        _seen_ids.clear()

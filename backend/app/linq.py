@@ -20,9 +20,11 @@ demoable with the network unplugged.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -31,6 +33,8 @@ from typing import Any, Iterable, Optional
 import httpx
 
 from .config import get_settings
+
+log = logging.getLogger("carepath.linq")
 
 # Linq's built-in tapback types. Anything else is sent as a `custom` tapback
 # carrying the emoji itself, which is how a check mark becomes a tapback at all
@@ -52,20 +56,50 @@ ACK_REACTIONS = {
 _BANNED_SUBSTRINGS = ("diagnos", "chest pain", "confusion", "medication", "mg")
 
 
+# Linq error codes we branch on. Named, because `if result.code == 1005` in
+# the middle of a send path tells the next reader nothing.
+ERR_MISSING_FIELD = 1001
+ERR_INVALID_PARAMETER = 1005   # includes "the first message may not be a link"
+ERR_RATE_LIMITED = 1007
+
+
 class LinqError(RuntimeError):
     """Raised only by `assert_configured`; the send path never raises."""
 
 
 @dataclass
 class LinqResult:
-    """What every call here returns. `ok` is the only field callers must check."""
+    """What every call here returns. `ok` is the only field callers must check.
+
+    The rest is for deciding what to do about a failure. `code` is Linq's
+    numeric error code, parsed from the envelope rather than sniffed out of a
+    string -- a trace id can contain "1005" and a substring match on the error
+    text would happily mistake one for the other.
+    """
 
     ok: bool
     mocked: bool = False
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
     error: Optional[str] = None
+    status: Optional[int] = None       # HTTP status
+    code: Optional[int] = None         # Linq error code, e.g. 1005, 1007
+    retry_after: Optional[float] = None
+    trace_id: Optional[str] = None     # quote this to Linq support
+    attempts: int = 1
     raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def retryable(self) -> bool:
+        """Worth sending again, unchanged.
+
+        A rate limit and a server-side fault are worth retrying. A malformed
+        body or a revoked opt-out are not: the same request will fail the same
+        way, and retrying it is how you turn one mistake into a rate limit.
+        """
+        if self.ok or self.status is None:
+            return self.status is None and not self.ok  # network fault: retry
+        return self.status == 429 or 500 <= self.status < 600
 
 
 def is_enabled() -> bool:
@@ -122,16 +156,38 @@ def split_link(body: str) -> tuple[str, Optional[str]]:
     return re.sub(r"\s+", " ", stripped).strip(), url
 
 
-async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
+def _parse_error(resp: httpx.Response) -> LinqResult:
+    """Linq's error envelope: {success, error:{status, code, message,
+    retry_after, doc_url}, trace_id}."""
+    body: dict[str, Any] = {}
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.post(_url(path), headers=_headers(), json=payload)
-            if resp.status_code >= 400:
-                return LinqResult(ok=False, error=f"{resp.status_code}: {resp.text[:300]}")
-            data = resp.json() if resp.content else {}
-    except Exception as exc:  # network, DNS, timeout, bad JSON
-        return LinqResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+        parsed = resp.json()
+        if isinstance(parsed, dict):
+            body = parsed
+    except Exception:
+        pass
+    err = body.get("error") if isinstance(body.get("error"), dict) else {}
 
+    retry_after = err.get("retry_after")
+    if retry_after is None and "Retry-After" in resp.headers:
+        # The header is authoritative when both are present, per the docs.
+        try:
+            retry_after = float(resp.headers["Retry-After"])
+        except ValueError:
+            retry_after = None
+
+    return LinqResult(
+        ok=False,
+        status=resp.status_code,
+        code=err.get("code"),
+        retry_after=float(retry_after) if retry_after is not None else None,
+        trace_id=body.get("trace_id"),
+        error=f"{resp.status_code}: {err.get('message') or resp.text[:200]}",
+        raw=body,
+    )
+
+
+def _parse_success(data: dict[str, Any]) -> LinqResult:
     # Two response shapes: a send returns {chat_id, message}, a chat creation
     # returns {chat: {id, ..., message}}. Both are flattened to the same thing.
     chat = data.get("chat") or {}
@@ -142,8 +198,74 @@ async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
         ok=True,
         chat_id=data.get("chat_id") or chat.get("id") or message.get("chat_id"),
         message_id=message.get("id") or data.get("id"),
+        trace_id=data.get("trace_id"),
         raw=data,
     )
+
+
+async def _request(
+    method: str, path: str, payload: dict[str, Any] | None = None
+) -> LinqResult:
+    """One Linq call, retried when -- and only when -- retrying can help.
+
+    Linq's own guidance: prefer `Retry-After` on a 429, otherwise exponential
+    backoff, and keep a hard upper bound rather than hammering the wall. A
+    4xx that is not a rate limit is not retried at all, because the same
+    request will fail the same way and the retry is itself the bug.
+    """
+    settings = get_settings()
+    attempts = max(1, settings.linq_max_attempts)
+    delay = settings.linq_backoff_base_s
+    last: LinqResult | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=settings.linq_timeout_s) as client:
+                resp = await client.request(
+                    method, _url(path), headers=_headers(), json=payload
+                )
+            if resp.status_code >= 400:
+                last = _parse_error(resp)
+            else:
+                data = resp.json() if resp.content else {}
+                result = _parse_success(data if isinstance(data, dict) else {})
+                result.attempts = attempt
+                if attempt > 1:
+                    log.info("linq %s %s succeeded on attempt %d", method, path, attempt)
+                return result
+        except Exception as exc:  # network, DNS, timeout, bad JSON
+            last = LinqResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+
+        last.attempts = attempt
+        if attempt == attempts or not last.retryable:
+            break
+
+        wait = last.retry_after if last.retry_after is not None else delay
+        # A rate limit can ask us to wait longer than we are willing to hold a
+        # request open. Better to fail now and let the outbound queue retry
+        # than to block a check-in behind a sixty-second sleep.
+        if wait > settings.linq_max_wait_s:
+            log.warning(
+                "linq %s %s asked for %.0fs, longer than we will wait", method, path, wait
+            )
+            break
+        log.warning(
+            "linq %s %s failed (%s, code %s, trace %s); retrying in %.1fs",
+            method, path, last.status, last.code, last.trace_id, wait,
+        )
+        await asyncio.sleep(wait)
+        delay = min(delay * 2, settings.linq_max_wait_s)
+
+    if last and not last.ok:
+        log.error(
+            "linq %s %s gave up after %d attempt(s): %s (code %s, trace %s)",
+            method, path, last.attempts, last.error, last.code, last.trace_id,
+        )
+    return last or LinqResult(ok=False, error="no attempt was made")
+
+
+async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
+    return await _request("POST", path, payload)
 
 
 async def _get(path: str) -> dict[str, Any]:
@@ -243,17 +365,9 @@ async def set_group_name(chat_id: str, name: str) -> LinqResult:
     """Name the thread so it is findable in a crowded message list."""
     if not is_enabled():
         return LinqResult(ok=True, mocked=True, chat_id=chat_id)
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.put(
-                _url(f"chats/{chat_id}"), headers=_headers(),
-                json={"display_name": name},
-            )
-            if resp.status_code >= 400:
-                return LinqResult(ok=False, error=f"{resp.status_code}: {resp.text[:200]}")
-    except Exception as exc:
-        return LinqResult(ok=False, error=f"{type(exc).__name__}: {exc}")
-    return LinqResult(ok=True, chat_id=chat_id)
+    result = await _request("PUT", f"chats/{chat_id}", {"display_name": name})
+    result.chat_id = result.chat_id or chat_id
+    return result
 
 
 async def add_participant(chat_id: str, handle: str) -> LinqResult:
@@ -296,7 +410,7 @@ async def send_direct(to: str, body: str) -> LinqResult:
         )
 
     result = await _post("messages", {"to": [to], "message": {"parts": text_parts(body)}})
-    if not result.ok and "1005" in (result.error or ""):
+    if not result.ok and result.code == ERR_INVALID_PARAMETER and _URL_RE.search(body):
         # First message to this handle and it carried a link. Split and retry.
         opening, link = split_link(body)
         result = await _post(
