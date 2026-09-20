@@ -40,6 +40,7 @@ from .schemas import (
     ActionLevel,
     BaselineSummary,
     CheckIn,
+    DatasetNote,
     EvidenceKind,
     RedFlag,
     RiskAssessment,
@@ -682,6 +683,103 @@ def _apply(base: float, drivers: list[RiskDriver]) -> float:
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
+def _datasets(metrics: dict) -> list[DatasetNote]:
+    """What is behind the numbers, read off what is actually loaded.
+
+    Only NEISS is trained on -- it is the one source with an outcome per case.
+    NHAMCS supplies base rates and FAERS supplies medication signals; neither
+    is a model, and the panel should not let anyone think otherwise.
+    """
+    from .datasets.warehouse import status as warehouse_status
+
+    tables = (warehouse_status().get("tables") or {})
+
+    def rows(name: str) -> int | None:
+        entry = tables.get(name)
+        return entry.get("rows") if entry else None
+
+    # The model reads neiss_senior_cases directly and it is not in the
+    # warehouse status list, so the training count is the authority for
+    # whether NEISS is here at all.
+    neiss_rows = metrics.get("senior_n") or rows("neiss_senior_rates")
+    nhamcs_rows = rows("nhamcs_senior_rates")
+    faers_rows = rows("faers_signals")
+    pair_rows = rows("faers_pair_signals")
+
+    years = ", ".join(metrics.get("years") or [])
+    auc = metrics.get("holdout_auc_weighted")
+
+    notes = [
+        DatasetNote(
+            name="NEISS",
+            role="Trained outcome model, and the fall cohort",
+            detail=(
+                (
+                    f"{metrics.get('senior_n', 0):,} emergency records for adults 65+"
+                    + (f" across {years}" if years else "")
+                    + ". The only source we fit a model on, because it is the "
+                    "only one with an outcome attached to each case"
+                    + (f"; held-out AUC {auc:.3f}" if auc else "")
+                    + ". Also supplies the fall rates, cut by head strike, "
+                    "anticoagulant and age band."
+                )
+                if neiss_rows else
+                "Not loaded here, so there is no fitted model and falls start "
+                "from a published placeholder rate. See docs/DATA.md."
+            ),
+            loaded=bool(neiss_rows),
+            trained=metrics.get("status") == "ok",
+            rows=neiss_rows,
+        ),
+        DatasetNote(
+            name="NHAMCS",
+            role="Where each percentage starts",
+            detail=(
+                "The CDC's national emergency department survey: how often a "
+                "visit for this complaint, at this age, ended in hospital rather "
+                "than going home. Survey-weighted, so it describes the country "
+                "rather than the hospitals that were sampled. Nothing is fitted "
+                "on it -- it is the base rate every concern begins from."
+                if nhamcs_rows else
+                "Not loaded here, so non-fall concerns start from a published "
+                "placeholder rate. Each card says so. See docs/DATA.md."
+            ),
+            loaded=bool(nhamcs_rows),
+            rows=nhamcs_rows,
+        ),
+        DatasetNote(
+            name="FAERS",
+            role="Medication signals",
+            detail=(
+                "FDA adverse-event reports for adults 65+, de-duplicated by case. "
+                "Tells us when a medicine on your list is reported with the "
+                "symptom you described more often than expected"
+                + (
+                    ", and when two of them together are reported with it more "
+                    "than either alone predicts"
+                    if pair_rows else ""
+                )
+                + ". Reporting patterns, not rates of harm, and never a cause."
+                if faers_rows else
+                "Not loaded here, so medication cards fall back to placeholders."
+            ),
+            loaded=bool(faers_rows),
+            rows=faers_rows,
+        ),
+        DatasetNote(
+            name="Your own check-ins",
+            role="What is new or changing",
+            detail=(
+                "The part no national dataset can supply: whether a symptom is "
+                "new for you, and whether it is being reported more often than "
+                "it was last week."
+            ),
+            loaded=True,
+        ),
+    ]
+    return notes
+
+
 def assess(
     checkin: CheckIn,
     senior: Senior,
@@ -768,6 +866,7 @@ def assess(
         top_concern=top.code if top else None,
         overall_percent=max((c.probability_percent for c in concerns), default=None),
         bands=BANDS,
+        datasets=_datasets(metrics),
         model_status=metrics.get("status", "unavailable") if model_risk is not None
         else "not_loaded",
         model_risk_percent=round(model_risk * 100, 1) if model_risk is not None else None,

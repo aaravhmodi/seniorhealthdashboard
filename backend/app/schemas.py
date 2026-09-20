@@ -218,6 +218,21 @@ class RiskConcern(BaseModel):
     matched_on: list[str] = []        # what in the check-in triggered it
 
 
+class DatasetNote(BaseModel):
+    """One source behind the numbers, and what it is actually doing.
+
+    Built from what is loaded rather than written by hand, so the panel cannot
+    claim a dataset the deployment does not have.
+    """
+
+    name: str                         # "NEISS"
+    role: str                         # "Trained outcome model"
+    detail: str                       # what it contributes, with counts
+    loaded: bool
+    trained: bool = False             # we fitted a model on it
+    rows: Optional[int] = None
+
+
 class RiskBand(BaseModel):
     band: str
     label: str
@@ -239,6 +254,7 @@ class RiskAssessment(BaseModel):
     top_concern: Optional[str] = None
     overall_percent: Optional[float] = None
     bands: list[RiskBand] = []
+    datasets: list[DatasetNote] = []
     # Provenance for the fitted model.
     model_status: str = "unavailable"
     model_risk_percent: Optional[float] = None

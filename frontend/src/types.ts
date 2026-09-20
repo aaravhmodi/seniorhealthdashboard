@@ -35,8 +35,14 @@ export interface RiskBand {
   band: RiskBandName; label: string; lower_percent: number; upper_percent: number
   action: string; action_level: ActionLevel
 }
+// Built from what the deployment has actually loaded, so the panel cannot
+// claim a dataset that is not there.
+export interface DatasetNote {
+  name: string; role: string; detail: string; loaded: boolean; trained: boolean; rows?: number
+}
 export interface RiskAssessment {
   concerns: RiskConcern[]; top_concern?: string; overall_percent?: number; bands: RiskBand[]
+  datasets: DatasetNote[]
   model_status: string; model_risk_percent?: number; model_auc?: number; model_n?: number
   model_years: string[]; model_holdout_years: string[]; model_basis: string
   model_tokens: string[]; ladder_floor?: ActionLevel; ladder_note: string

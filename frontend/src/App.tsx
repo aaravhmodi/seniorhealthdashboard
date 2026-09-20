@@ -15,7 +15,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, DatasetNote, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -806,6 +806,7 @@ function ConcernCard({ concern, open, onToggle }: {
 function RiskPanel({ risk }: { risk: RiskAssessment }) {
   const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
   const [showModel, setShowModel] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   if (!risk.concerns.length) return null;
   const top = risk.concerns[0];
   const others = risk.concerns.length - 1;
@@ -864,6 +865,30 @@ function RiskPanel({ risk }: { risk: RiskAssessment }) {
       </div>
 
       <div className="risk-provenance">
+        <button
+          type="button"
+          className="concern-toggle"
+          aria-expanded={showSources}
+          onClick={() => setShowSources(!showSources)}
+        >
+          <ChevronDown size={16} className={showSources ? "rotated" : ""} />
+          Where these numbers come from
+        </button>
+        {showSources && (
+          <ul className="source-list">
+            {risk.datasets.map((dataset: DatasetNote) => (
+              <li key={dataset.name} className={dataset.loaded ? "" : "not-loaded"}>
+                <div className="source-head">
+                  <strong>{dataset.name}</strong>
+                  <span className="source-role">{dataset.role}</span>
+                  {dataset.trained && <span className="source-tag trained">model trained on this</span>}
+                  {!dataset.loaded && <span className="source-tag missing">not loaded here</span>}
+                </div>
+                <p>{dataset.detail}</p>
+              </li>
+            ))}
+          </ul>
+        )}
         {risk.model_risk_percent !== undefined && risk.model_risk_percent !== null && (
           <p className="model-headline">
             The trained model reads this check-in at{" "}

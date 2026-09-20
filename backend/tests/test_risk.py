@@ -200,3 +200,31 @@ def test_the_evaluation_carries_the_assessment_through_the_contract():
     assert payload["risk"]["bands"]
     top = payload["risk"]["concerns"][0]
     assert {"label", "probability_percent", "action", "drivers"} <= set(top)
+
+
+# -- dataset provenance ----------------------------------------------------
+def test_the_panel_names_every_source_behind_the_numbers():
+    assessment = _assess(_checkin("I fell and hit my head.", ["fall"]), _senior())
+    names = {d.name for d in assessment.datasets}
+    assert {"NEISS", "NHAMCS", "FAERS"} <= names
+    for dataset in assessment.datasets:
+        assert dataset.role and dataset.detail
+
+
+def test_only_neiss_is_ever_marked_as_trained_on():
+    """NEISS is the only source with an outcome per case, so it is the only one
+    we fit a model on. A panel that implied otherwise would be lying about
+    what the percentages are."""
+    assessment = _assess(_checkin("I fell and hit my head.", ["fall"]), _senior())
+    trained = [d.name for d in assessment.datasets if d.trained]
+    assert trained in ([], ["NEISS"]), f"claimed a model on {trained}"
+
+
+def test_a_source_that_is_not_loaded_says_so():
+    """The panel is built from what the deployment actually has. If NHAMCS is
+    missing the concerns fall back to placeholder base rates, and the card has
+    to admit it rather than quietly reading like measured data."""
+    assessment = _assess(_checkin("I fell and hit my head.", ["fall"]), _senior())
+    for dataset in assessment.datasets:
+        if not dataset.loaded:
+            assert "not loaded" in dataset.detail.lower()

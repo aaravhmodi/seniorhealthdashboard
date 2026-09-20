@@ -282,3 +282,15 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
   .concern-figure { text-align: left; }
   .band-zone span { font-size: .6rem; }
 }
+
+/* Which datasets are behind the numbers, and which are only base rates. */
+.source-list { list-style: none; margin: .8rem 0 1rem; padding: 0; display: grid; gap: .7rem; }
+.source-list li { background: #f5f8f5; border-radius: 10px; padding: .75rem .85rem; }
+.source-list li.not-loaded { opacity: .72; }
+.source-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; margin-bottom: .3rem; }
+.source-head strong { font-size: .92rem; color: #18352d; }
+.source-role { font-size: .78rem; color: #55705f; }
+.source-tag { border-radius: 99px; padding: .13rem .45rem; font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.source-tag.trained { background: #e3f0e8; color: #1e6048; }
+.source-tag.missing { background: #f1efe4; color: #7a6a33; }
+.source-list p { font-size: .8rem; line-height: 1.5; color: #55705f; margin: 0; }
