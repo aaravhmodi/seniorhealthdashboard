@@ -59,6 +59,14 @@ LEXICON: dict[str, list[str]] = {
                  "出血", "sangramento", "saignement", "du sang"],
 }
 
+# Native-script phrases are kept as Unicode escapes so Windows and Linux
+# checkouts cannot silently reinterpret the source encoding. These supplement
+# the Latin-script demo lexicon above.
+LEXICON["chest pain"].extend(["\u80f8\u75db", "\u80f8\u53e3\u75db"])
+LEXICON["shortness of breath"].extend(["\u547c\u5438\u56f0\u96be", "\u5598\u4e0d\u8fc7\u6c14"])
+LEXICON["nausea"].extend(["\u6076\u5fc3", "\u5455\u5410", "\u092e\u0924\u0932\u0940", "\u091c\u0940\u0915\u093e\u092e\u0932\u093e\u0928\u093e"])
+LEXICON["shortness of breath"].extend(["\u0938\u093e\u0902\u0938 \u0932\u0947\u0928\u0947 \u092e\u0947\u0902 \u0924\u0915\u0932\u0940\u092b", "\u0938\u093e\u0902\u0938 \u092b\u0942\u0932\u0928\u093e"])
+
 # Explicit negations only. We do NOT infer negation from a nearby "no", because
 # "no puedo respirar" (I can't breathe) would read as a negation and silence the
 # most urgent thing a patient can say. Listing the phrases keeps it safe.

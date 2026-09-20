@@ -51,8 +51,10 @@ def _cardiac(c: CheckIn, s: Senior, text: str) -> list[str]:
     # nausea, sweating or sudden weakness. This is the geriatric miss we exist for.
     diaphoresis = ["sweaty", "cold sweat", "clammy", "sudando frio", "sudor frio",
                    "sudando", "冒冷汗", "出冷汗", "suando frio"]
+    native_diaphoresis = ["\u51b7\u6c57", "\u51fa\u51b7\u6c57",
+                          "\u0920\u0902\u0921\u093e \u092a\u0938\u0940\u0928\u093e"]
     atypical = {"shortness of breath"} & labels and (
-        {"nausea"} & labels or _any_phrase(text, diaphoresis)
+        {"nausea"} & labels or _any_phrase(text, diaphoresis + native_diaphoresis)
     )
     if atypical:
         hits.append("atypical:breathless + nausea/diaphoresis")

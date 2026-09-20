@@ -32,6 +32,18 @@ def client():
         yield c
 
 
+@pytest.mark.parametrize(
+    ("language", "text"),
+    [
+        ("zh", "\u6211\u547c\u5438\u56f0\u96be\uff0c\u6076\u5fc3\uff0c\u8fd8\u5728\u51fa\u51b7\u6c57\u3002"),
+        ("hi", "\u092e\u0941\u091d\u0947 \u0938\u093e\u0902\u0938 \u0932\u0947\u0928\u0947 \u092e\u0947\u0902 \u0924\u0915\u0932\u0940\u092b, \u092e\u0924\u0932\u0940 \u0914\u0930 \u0920\u0902\u0921\u093e \u092a\u0938\u0940\u0928\u093e \u0906 \u0930\u0939\u093e \u0939\u0948."),
+    ],
+)
+def test_native_script_urgent_symptoms_are_extracted(language, text):
+    labels = {symptom.label for symptom in extract(text, language)}
+    assert {"shortness of breath", "nausea"} <= labels
+
+
 # -- the linter itself has to work before it can guard anything -----------
 @pytest.mark.parametrize(
     "bad",
