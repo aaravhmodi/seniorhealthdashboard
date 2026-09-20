@@ -456,6 +456,12 @@ async def react(
 
 
 ACK_TAPBACK = "✅"  # what we tap back to say "seen, we have it"
+_runtime_webhook_secret: str | None = None
+
+
+def webhook_secret() -> str:
+    """Return the active subscription secret, when Linq issued one at boot."""
+    return _runtime_webhook_secret or get_settings().linq_webhook_secret
 
 
 # --------------------------------------------------------------------------
@@ -469,13 +475,19 @@ async def ensure_webhook(target_url: str, events: list[str]) -> LinqResult:
         existing = await _get("webhook-subscriptions")
         for sub in existing.get("subscriptions", []):
             if sub.get("target_url") == target_url and sub.get("is_active"):
+                global _runtime_webhook_secret
+                if sub.get("signing_secret"):
+                    _runtime_webhook_secret = str(sub["signing_secret"])
                 return LinqResult(ok=True, raw=sub)
     except Exception:
         pass  # a listing failure should not stop us trying to create it
-    return await _post(
+    result = await _post(
         "webhook-subscriptions",
         {"target_url": target_url, "subscribed_events": events},
     )
+    if result.ok and isinstance(result.raw, dict) and result.raw.get("signing_secret"):
+        _runtime_webhook_secret = str(result.raw["signing_secret"])
+    return result
 
 
 def verify_signature(

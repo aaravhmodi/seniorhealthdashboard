@@ -681,11 +681,11 @@ async def linq_webhook(
         # and any existing integration keep working.
         ok = linq.verify_signature(
             raw, webhook_id, webhook_timestamp, webhook_signature,
-            settings.linq_webhook_secret,
+            linq.webhook_secret(),
         )
         if not ok:
             expected = hmac.new(
-                settings.linq_webhook_secret.encode(), raw, hashlib.sha256
+                linq.webhook_secret().encode(), raw, hashlib.sha256
             ).hexdigest()
             ok = bool(x_linq_signature) and hmac.compare_digest(expected, x_linq_signature)
         if not ok:
