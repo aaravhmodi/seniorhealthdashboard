@@ -79,3 +79,29 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .history-record > strong { grid-column: 1; }.history-record > p:first-of-type { grid-column: 2; }.history-record > p:last-of-type { grid-column: 3; }
 .history-record > p { margin-top: 0; }
 @media (max-width: 720px) { .history-record { grid-template-columns: 1fr; gap: .3rem; }.history-record > strong, .history-record > p:first-of-type, .history-record > p:last-of-type { grid-column: 1; } }
+
+/* Caregiver view -- the page behind the link in a Linq text.
+   Read on a phone, cold, by someone who is worried. Level first and large,
+   one action next, everything else below the fold. */
+.caregiver-page { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+.caregiver-head { display: flex; flex-direction: column; gap: 6px; }
+.caregiver-card { background: #fff; border: 1px solid #e6e8ec; border-radius: 16px; padding: 20px; }
+.caregiver-card h2 { font-size: 1rem; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.status-card { border-left: 6px solid #9aa3af; }
+.status-card h1 { font-size: 1.6rem; margin: 6px 0 10px; line-height: 1.25; }
+.status-eyebrow { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; }
+.status-explain { margin: 0; font-size: 1.05rem; line-height: 1.5; }
+/* Urgency is carried by one accent, not by a red page. A screen that shouts
+   at level 4 has nowhere left to go. */
+.status-card.level-1 { border-left-color: #3f8f5f; }
+.status-card.level-2 { border-left-color: #b5842a; }
+.status-card.level-3 { border-left-color: #c2410c; }
+.status-card.level-4 { border-left-color: #b01818; }
+.status-urgent { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; font-weight: 600; color: #b01818; }
+.ack-card { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.ack-card p { margin: 0; }
+.action-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.action-list li { display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+.caregiver-foot { padding: 0 4px; }
+.caregiver-foot p { display: flex; align-items: flex-start; gap: 8px; font-size: .85rem; line-height: 1.5; }
+@media (max-width: 480px) { .status-card h1 { font-size: 1.4rem; } .caregiver-card { padding: 16px; } }

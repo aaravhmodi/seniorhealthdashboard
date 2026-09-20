@@ -20,3 +20,15 @@ export interface EvidenceCard {
   stat?: { value: number; unit: string; n?: number; ci_low?: number; ci_high?: number }
 }
 export interface CheckInResponse { checkin: CheckIn; evaluation: Evaluation }
+
+// -- Caregiver view (opened from the link in a Linq text) -------------------
+export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }
+export interface BaselineSummary { window_days: number; checkin_count: number; mean_level: number; trending_up: string[]; trending_down: string[] }
+export interface Timeline { senior_id: string; entries: TimelineEntry[]; baseline: BaselineSummary }
+export interface CircleMember { handle: string; name: string; role: 'patient' | 'caregiver' | 'care_team'; caregiver_id?: string }
+export interface CareCircle { senior_id: string; chat_id?: string; group_name: string; members: CircleMember[]; status: string; mocked: boolean }
+export interface AlertAck { caregiver_id: string; at: string; via: string }
+export interface Alert {
+  id: string; senior_id: string; level: ActionLevel; created_at: string; body: string
+  notified: string[]; pending_order: string[]; acks: AlertAck[]; escalations: number; resolved: boolean
+}

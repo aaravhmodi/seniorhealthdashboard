@@ -14,6 +14,7 @@ import { demoCarePlan, demoCheckins, demoEvaluation, demoSenior } from "./mock";
 import { api } from "./api";
 import type { CarePlan, CheckIn, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
+import Caregiver, { caregiverRoute } from "./Caregiver";
 
 type Credentials = { email: string; password: string };
 const splitList = (value: FormDataEntryValue | null) =>
@@ -673,6 +674,21 @@ function PlanSection({ title, values }: { title: string; values: string[] }) {
 }
 
 export default function App() {
+  // The link in every Linq text lands on /c/<senior_id>. It is a public,
+  // read-mostly view for a caregiver who is not signed in, so it is checked
+  // before any of the account flow below.
+  const caregiver = caregiverRoute(window.location.pathname, window.location.search);
+  if (caregiver)
+    return (
+      <Caregiver
+        seniorId={caregiver.seniorId}
+        evaluationId={caregiver.evaluationId}
+      />
+    );
+  return <AccountApp />;
+}
+
+function AccountApp() {
   const { i18n } = useTranslation();
   const [screen, setScreen] = useState<"login" | "signup" | "dashboard">(
     "login",
