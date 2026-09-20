@@ -56,6 +56,44 @@ RECOMMENDED_ACTIONS: dict[ActionLevel, list[str]] = {
     ],
 }
 
+# The action rung is deterministic, but its patient-facing name and next steps
+# must follow the language selected in the dashboard.  English remains the
+# fallback for a language we do not yet support.
+LOCALIZED_LEVEL_LABELS: dict[str, dict[ActionLevel, str]] = {
+    "en": {ActionLevel.LOG: "Log and monitor", ActionLevel.CALL_CLINIC: "Call clinic today", ActionLevel.GO_TO_ER: "Go to emergency care", ActionLevel.CALL_911: "Call 911 now"},
+    "es": {ActionLevel.LOG: "Registrar y vigilar", ActionLevel.CALL_CLINIC: "Llame hoy a la clínica", ActionLevel.GO_TO_ER: "Vaya a urgencias", ActionLevel.CALL_911: "Llame al 911 ahora"},
+    "pt": {ActionLevel.LOG: "Registrar e acompanhar", ActionLevel.CALL_CLINIC: "Ligue hoje para a clínica", ActionLevel.GO_TO_ER: "Vá ao pronto-socorro", ActionLevel.CALL_911: "Ligue para 911 agora"},
+    "zh": {ActionLevel.LOG: "记录并观察", ActionLevel.CALL_CLINIC: "今天联系诊所", ActionLevel.GO_TO_ER: "去急诊", ActionLevel.CALL_911: "立即拨打 911"},
+    "hi": {ActionLevel.LOG: "लिखें और निगरानी रखें", ActionLevel.CALL_CLINIC: "आज क्लिनिक को फ़ोन करें", ActionLevel.GO_TO_ER: "आपात विभाग जाएँ", ActionLevel.CALL_911: "अभी 911 पर फ़ोन करें"},
+}
+
+LOCALIZED_ACTIONS: dict[str, dict[ActionLevel, list[str]]] = {
+    "hi": {
+        ActionLevel.LOG: ["अपनी रोज़ की दिनचर्या रखें और कल फिर चेक-इन करें।", "कुछ भी बिगड़े तो हमें तुरंत बताएं।"],
+        ActionLevel.CALL_CLINIC: ["आज अपने क्लिनिक या फार्मासिस्ट को फ़ोन करें।", "फ़ोन करते समय अपनी दवाओं की सूची तैयार रखें।", "आपके देखभालकर्ता को सूचना दे दी गई है।"],
+        ActionLevel.GO_TO_ER: ["अभी आपात विभाग जाएँ।", "दवाओं की सूची साथ रखें — स्टाफ के लिए एक सारांश तैयार है।", "खुद गाड़ी न चलाएँ।"],
+        ActionLevel.CALL_911: ["अभी 911 पर फ़ोन करें।", "जहाँ हैं वहीं रहें और हो सके तो दरवाज़ा खोल दें।", "आपके देखभालकर्ता से संपर्क किया जा रहा है।"],
+    },
+    "es": {
+        ActionLevel.LOG: ["Siga su rutina habitual y registre cómo se siente mañana.", "Avísenos de inmediato si algo empeora."],
+        ActionLevel.CALL_CLINIC: ["Llame hoy a su clínica o farmacia.", "Tenga lista su lista de medicamentos cuando llame.", "Se notificó a su cuidador."],
+        ActionLevel.GO_TO_ER: ["Vaya ahora al servicio de urgencias.", "Lleve su lista de medicamentos; preparamos un resumen para el personal.", "No conduzca usted."],
+        ActionLevel.CALL_911: ["Llame al 911 ahora.", "Quédese donde está y, si puede, abra la puerta.", "Estamos contactando a su cuidador."],
+    },
+    "pt": {
+        ActionLevel.LOG: ["Mantenha sua rotina e faça outro check-in amanhã.", "Avise-nos imediatamente se algo piorar."],
+        ActionLevel.CALL_CLINIC: ["Ligue hoje para sua clínica ou farmácia.", "Tenha sua lista de medicamentos pronta ao ligar.", "Seu cuidador foi avisado."],
+        ActionLevel.GO_TO_ER: ["Vá agora ao pronto-socorro.", "Leve sua lista de medicamentos; preparamos um resumo para a equipe.", "Não dirija."],
+        ActionLevel.CALL_911: ["Ligue para 911 agora.", "Fique onde está e, se puder, destranque a porta.", "Estamos entrando em contato com seu cuidador."],
+    },
+    "zh": {
+        ActionLevel.LOG: ["保持日常作息，明天再次记录。", "如果任何情况变差，请马上告诉我们。"],
+        ActionLevel.CALL_CLINIC: ["今天联系您的诊所或药剂师。", "打电话时准备好您的用药清单。", "已通知您的照护者。"],
+        ActionLevel.GO_TO_ER: ["现在去急诊。", "带上用药清单；我们已为工作人员准备摘要。", "请不要自己开车。"],
+        ActionLevel.CALL_911: ["立即拨打 911。", "留在原地，如果可以请打开门。", "正在联系您的照护者。"],
+    },
+}
+
 
 def _confidence(checkin: CheckIn, flags, evidence: list[EvidenceCard]) -> float:
     """Low when we heard little, or heard it badly."""
@@ -86,6 +124,8 @@ def evaluate(
     previous_level: ActionLevel | None = None,
     language: str | None = None,
 ) -> Evaluation:
+    output_language = language or senior.preferred_language
+    output_language = output_language if output_language in LOCALIZED_LEVEL_LABELS else "en"
     flags = evaluate_rules(checkin, senior)
     floor = rule_floor(flags)
 
@@ -130,7 +170,7 @@ def evaluate(
 
     explanation, explanation_en = render_explanation(
         level=level,
-        language=language or senior.preferred_language,
+        language=output_language,
         symptoms=[s.label for s in checkin.symptoms],
         flags=flags,
         evidence=evidence,
@@ -143,13 +183,13 @@ def evaluate(
         senior_id=senior.id,
         created_at=now(),
         level=level,
-        level_label=LEVEL_LABELS[int(level)],
+        level_label=LOCALIZED_LEVEL_LABELS[output_language][level],
         previous_level=previous_level,
         red_flags=flags,
         evidence=evidence,
         explanation=explanation,
         explanation_en=explanation_en,
-        recommended_actions=RECOMMENDED_ACTIONS[level],
+        recommended_actions=LOCALIZED_ACTIONS.get(output_language, RECOMMENDED_ACTIONS)[level],
         confidence=confidence,
         escalated_for_uncertainty=escalated,
         # A clinician confirms anything that sends someone to hospital, and
