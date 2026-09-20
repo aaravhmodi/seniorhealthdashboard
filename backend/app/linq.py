@@ -424,10 +424,17 @@ async def send_to_chat(chat_id: str, body: str) -> LinqResult:
             ok=True, mocked=True, chat_id=chat_id,
             message_id=_mock_id("msg", chat_id, body, str(time.time())),
         )
-    result = await _post_v1_message(
-        f"chats/{chat_id}/messages",
-        {"parts": [{"type": "text", "body": body}], "category": "transactional"},
+    # The configured partner base currently exposes the legacy v3 route;
+    # newer Linq accounts expose the documented v1 route instead. Try v3
+    # first for this account, then fall back to v1 when the route is absent.
+    result = await _post(
+        f"chats/{chat_id}/messages", {"message": {"parts": text_parts(body)}}
     )
+    if result.status == 404:
+        result = await _post_v1_message(
+            f"chats/{chat_id}/messages",
+            {"parts": [{"type": "text", "body": body}], "category": "transactional"},
+        )
     result.chat_id = result.chat_id or chat_id
     return result
 
@@ -505,7 +512,12 @@ async def ensure_webhook(target_url: str, events: list[str]) -> LinqResult:
                 global _runtime_webhook_secret
                 if sub.get("signing_secret"):
                     _runtime_webhook_secret = str(sub["signing_secret"])
-                return LinqResult(ok=True, raw=sub)
+                    return LinqResult(ok=True, raw=sub)
+                # Linq only returns signing_secret once, at creation. If a
+                # process restarted before persisting it, rotate by replacing
+                # this endpoint so the new secret is captured below.
+                await _request("DELETE", f"webhook-subscriptions/{sub['id']}")
+                break
     except Exception:
         pass  # a listing failure should not stop us trying to create it
     result = await _post(
