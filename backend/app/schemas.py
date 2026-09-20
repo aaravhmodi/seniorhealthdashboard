@@ -397,7 +397,12 @@ class FollowUpJob(BaseModel):
     due_at: datetime
     hours_after: float
     source_evaluation_id: Optional[str] = None
-    status: Literal["scheduled", "sent", "answered", "failed", "cancelled"] = "scheduled"
+    # "sending" is the claimed-but-not-yet-delivered state. It exists so the
+    # background scheduler and a manual tick cannot both pick up the same job
+    # and text the family twice.
+    status: Literal[
+        "scheduled", "sending", "sent", "answered", "failed", "cancelled"
+    ] = "scheduled"
     sent_at: Optional[datetime] = None
     answered_at: Optional[datetime] = None
     result_level: Optional[ActionLevel] = None

@@ -24,6 +24,7 @@ messaged, if `senior.consent["share_with:<caregiver_id>"]` is true.
 """
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 from typing import Optional
 
@@ -44,6 +45,9 @@ from .schemas import (
     TimelineEntry,
 )
 from .store import new_id, now, store
+
+# Guards claiming an alert for escalation. See sweep_escalations().
+_escalation_lock = threading.Lock()
 
 
 def detail_link(senior_id: str, evaluation_id: str | None = None) -> str:
@@ -398,11 +402,19 @@ async def escalate(alert: Alert) -> Optional[Caregiver]:
 
 async def sweep_escalations() -> list[str]:
     """Fire every alert whose clock has run out. Called by the scheduler tick."""
-    due = [
-        a for a in list(store.alerts.values())
-        if not a.resolved and a.escalate_after and a.escalate_after <= now()
-    ]
     fired: list[str] = []
+    with _escalation_lock:
+        due = [
+            a for a in list(store.alerts.values())
+            if not a.resolved and a.escalate_after and a.escalate_after <= now()
+        ]
+        # Claim before awaiting: the background scheduler and a hand-fired
+        # tick must not both escalate the same alert and text the backup
+        # caregiver twice. `escalate` sets a fresh deadline if it sends.
+        for alert in due:
+            alert.escalate_after = None
+            store.alerts[alert.id] = alert
+
     for alert in due:
         await escalate(alert)
         fired.append(alert.id)

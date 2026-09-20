@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from .extraction import extract
 from .ladder import evaluate
 from .schemas import (
+    CarePlan,
     Caregiver,
     CheckIn,
     CheckInSource,
@@ -58,9 +59,22 @@ def _senior_rosa() -> Senior:
                 phone_e164="+16175550142",
                 preferred_language="en",
                 linq_thread_id="thread_rosa_family",
-            )
+                escalation_order=0,
+            ),
+            # The backup. Rosa's demo is the one that exercises escalation, so
+            # she needs someone behind Priya -- an escalation chain of one is
+            # not an escalation chain.
+            Caregiver(
+                id="cg_marco",
+                name="Marco Mendez",
+                relationship="son",
+                phone_e164="+16175550178",
+                preferred_language="es",
+                linq_thread_id="thread_rosa_family",
+                escalation_order=1,
+            ),
         ],
-        consent={"share_with:cg_priya": True},
+        consent={"share_with:cg_priya": True, "share_with:cg_marco": True},
     )
 
 
@@ -262,6 +276,32 @@ def _seed_history(store: Store, senior: Senior, script: list[tuple[int, str, str
         )
 
 
+# Discharge instructions, in the words a senior would actually be handed them
+# in -- not a paraphrase we invented, because the teach-back is scored against
+# these and scoring against our own rewording would fail people for our prose.
+CARE_PLANS: dict[str, list[str]] = {
+    "sen_rosa": [
+        "Take the water pill in the morning, not at night.",
+        "Stand up slowly, and sit back down if the room spins.",
+        "Weigh yourself every morning and write the number down.",
+        "Call the clinic if you gain three pounds in a day.",
+    ],
+    "sen_chen": [
+        "Do not take any new pain medicine without asking the pharmacist.",
+        "Watch for a headache that keeps getting worse.",
+        "Come back to the emergency department if you feel sleepy or confused.",
+    ],
+    "sen_walter": [
+        "Take the blood pressure pill every morning with food.",
+        "Call the clinic if your speech or your face changes again.",
+    ],
+    "sen_henriette": [
+        "Use the walker in the kitchen, every time.",
+        "Call your daughter if you fall again, even if you feel fine.",
+    ],
+}
+
+
 def seed(store: Store) -> Store:
     if store.seniors:
         return store
@@ -273,4 +313,11 @@ def seed(store: Store) -> Store:
     ):
         store.put_senior(senior)
         _seed_history(store, senior, script)
+        instructions = CARE_PLANS.get(senior.id, [])
+        if instructions:
+            store.care_plans[senior.id] = CarePlan(
+                senior_id=senior.id,
+                instructions=instructions,
+                updated_at=datetime.now(timezone.utc),
+            )
     return store

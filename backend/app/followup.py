@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 import unicodedata
 from datetime import timedelta
 from typing import Iterable, Optional
@@ -64,6 +65,11 @@ _STOPWORDS = {
 COVERAGE_THRESHOLD = 0.6
 # And the whole teach-back passes when this share of instructions is covered.
 PASS_THRESHOLD = 0.7
+
+# Guards the scheduled -> sending transition. See claim_due().
+claim_lock = threading.Lock()
+# How long a claimed job may sit un-delivered before it is retried.
+CLAIM_TIMEOUT_S = 60
 
 
 # --------------------------------------------------------------------------
@@ -325,6 +331,32 @@ def due_jobs() -> list[FollowUpJob]:
     ]
 
 
+def claim_due() -> list[FollowUpJob]:
+    """Take ownership of every due job, atomically.
+
+    The background scheduler and a hand-fired `/demo/tick` can run at the same
+    moment. Without a claim they both see the same due job and the family gets
+    the same text twice -- which, for a system whose whole promise is "we will
+    tell you what is happening", is worse than being late.
+    """
+    claimed: list[FollowUpJob] = []
+    stale = now() - timedelta(seconds=CLAIM_TIMEOUT_S)
+    with claim_lock:
+        for job in list(store.followups.values()):
+            # A claim whose send never finished -- the process died, or the
+            # transport hung past its own timeout -- goes back in the queue.
+            # A follow-up that is silently stuck is indistinguishable from one
+            # we never scheduled, which is the failure this whole module
+            # exists to prevent.
+            if job.status == "sending" and job.due_at <= stale:
+                job.status = "scheduled"
+            if job.status == "scheduled" and job.due_at <= now():
+                job.status = "sending"
+                store.followups[job.id] = job
+                claimed.append(job)
+    return claimed
+
+
 def jobs_for(senior_id: str) -> list[FollowUpJob]:
     return sorted(
         (j for j in store.followups.values() if j.senior_id == senior_id),
@@ -341,7 +373,7 @@ async def tick() -> dict:
     Separated from the loop so a test (and the demo `/demo/tick` endpoint) can
     advance time by calling it directly instead of sleeping.
     """
-    sent = [(await send_followup(job)).id for job in due_jobs()]
+    sent = [(await send_followup(job)).id for job in claim_due()]
     escalated = await circle.sweep_escalations()
     return {"followups_sent": sent, "alerts_escalated": escalated}
 
