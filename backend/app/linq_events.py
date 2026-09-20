@@ -51,7 +51,7 @@ def _text_of(parts: Any) -> Optional[str]:
     if not isinstance(parts, list):
         return None
     chunks = [
-        str(p.get("value", ""))
+        str(p.get("value") or p.get("body") or "")
         for p in parts
         if isinstance(p, dict) and p.get("type") == "text"
     ]
@@ -96,8 +96,8 @@ def normalize(payload: dict[str, Any]) -> Optional[LinqInbound]:
     if not isinstance(data, dict):
         return None
 
-    if event.startswith("message."):
-        if event != "message.received" and data.get("direction") != "inbound":
+    if event.startswith("message.") or event.startswith("message_"):
+        if event not in {"message.received", "message_received"} and data.get("direction") != "inbound":
             return None
         chat = data.get("chat") or {}
         sender = data.get("sender_handle") or {}
@@ -116,7 +116,7 @@ def normalize(payload: dict[str, Any]) -> Optional[LinqInbound]:
             event=event,
         )
 
-    if event == "reaction.added":
+    if event in {"reaction.added", "reaction_added"}:
         sender = data.get("from_handle") or {}
         if sender.get("is_me"):
             return None  # our own tapback is not the family acknowledging
