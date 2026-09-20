@@ -694,6 +694,47 @@ function Profile({
   );
 }
 
+function checkinWellnessScore(checkin: CheckIn) {
+  const symptoms = checkin.symptoms || [];
+  const averageSeverity = symptoms.length ? symptoms.reduce((total, symptom) => total + (symptom.severity ?? 2), 0) / symptoms.length : 0;
+  return Math.max(35, Math.min(100, Math.round(100 - symptoms.length * 4 - averageSeverity * 4)));
+}
+const wellnessCopy: Record<string, Record<string, string>> = {
+  en: { overview: "Personal check-in overview", title: "Senior wellness score", disclaimer: "A check-in score, not a medical diagnosis.", latest: "Latest check-in", start: "Complete a check-in to create your score", noData: "No check-in data yet", symptoms: "Reported symptoms", safety: "Safety review", voice: "Voice input", checkins: "Check-ins", consistency: "Consistency", trend: "Wellness trend", personalScore: "Personal check-in score", insight: "Check-in insight", noTrend: "No check-ins yet. Your trend appears after the first symptom check-in.", how: "How it works", assisted: "AI-assisted check-in insights", baseline: "Personal baseline comparison only. This is not a clinical measurement or diagnosis." },
+  es: { overview: "Resumen personal del registro", title: "Puntuación de bienestar", disclaimer: "Una puntuación de registro, no un diagnóstico médico.", latest: "Último registro", start: "Complete un registro para crear su puntuación", noData: "Aún no hay datos", symptoms: "Síntomas informados", safety: "Revisión de seguridad", voice: "Entrada de voz", checkins: "Registros", consistency: "Constancia", trend: "Tendencia de bienestar", personalScore: "Puntuación personal de registro", insight: "Información del registro", noTrend: "Aún no hay registros. La tendencia aparecerá después del primero.", how: "Cómo funciona", assisted: "Información de registro asistida por IA", baseline: "Comparación con su línea base personal. No es una medición ni un diagnóstico clínico." },
+  pt: { overview: "Resumo pessoal do registro", title: "Pontuação de bem-estar", disclaimer: "Uma pontuação de registro, não um diagnóstico médico.", latest: "Último registro", start: "Faça um registro para criar sua pontuação", noData: "Ainda não há dados", symptoms: "Sintomas relatados", safety: "Revisão de segurança", voice: "Entrada por voz", checkins: "Registros", consistency: "Regularidade", trend: "Tendência de bem-estar", personalScore: "Pontuação pessoal do registro", insight: "Informação do registro", noTrend: "Ainda não há registros. A tendência aparecerá após o primeiro.", how: "Como funciona", assisted: "Informações de registro assistidas por IA", baseline: "Comparação com sua linha de base pessoal. Não é uma medição ou diagnóstico clínico." },
+  zh: { overview: "个人记录概览", title: "健康评分", disclaimer: "这是记录评分，不是医学诊断。", latest: "最新记录", start: "完成一次记录以生成评分", noData: "暂无记录数据", symptoms: "报告的症状", safety: "安全评估", voice: "语音输入", checkins: "记录次数", consistency: "规律性", trend: "健康趋势", personalScore: "个人记录评分", insight: "记录提示", noTrend: "暂无记录。首次症状记录后将显示趋势。", how: "工作方式", assisted: "AI 辅助记录提示", baseline: "仅与个人基线比较。这不是临床测量或诊断。" },
+  hi: { overview: "व्यक्तिगत चेक-इन सारांश", title: "स्वास्थ्य स्कोर", disclaimer: "यह चेक-इन स्कोर है, चिकित्सा निदान नहीं।", latest: "नवीनतम चेक-इन", start: "अपना स्कोर बनाने के लिए चेक-इन पूरा करें", noData: "अभी कोई चेक-इन डेटा नहीं", symptoms: "बताए गए लक्षण", safety: "सुरक्षा समीक्षा", voice: "वॉइस इनपुट", checkins: "चेक-इन", consistency: "निरंतरता", trend: "स्वास्थ्य रुझान", personalScore: "व्यक्तिगत चेक-इन स्कोर", insight: "चेक-इन जानकारी", noTrend: "अभी कोई चेक-इन नहीं है। पहले चेक-इन के बाद रुझान दिखाई देगा।", how: "यह कैसे काम करता है", assisted: "AI-सहायता प्राप्त चेक-इन जानकारी", baseline: "व्यक्तिगत आधाररेखा से तुलना। यह चिकित्सीय माप या निदान नहीं है।" },
+};
+function WellnessOverview({ checkins, evaluation }: { checkins: CheckIn[]; evaluation: CheckInResponse["evaluation"] | null }) {
+  const { i18n } = useTranslation();
+  const copy = wellnessCopy[i18n.language] || wellnessCopy.en;
+  const [range, setRange] = useState<7 | 14 | 30>(14);
+  const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
+  const scores = [...checkins].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map(checkinWellnessScore);
+  const points = range === 7 ? scores.slice(-7) : range === 30 ? scores.slice(-30) : scores.slice(-14);
+  const selected = hoveredPoint === null ? points.length - 1 : hoveredPoint;
+  const currentScore = points[points.length - 1];
+  const previousScore = points[points.length - 2] || currentScore;
+  const change = currentScore && previousScore ? Math.round(((currentScore - previousScore) / previousScore) * 100) : 0;
+  const coordinates = points.map((score, index) => `${(index / Math.max(1, points.length - 1)) * 100},${100 - ((score - 35) / 65) * 100}`).join(" ");
+  const latest = checkins[0];
+  const consistency = Math.min(100, checkins.length * 14);
+  const severitySignal = latest?.symptoms.length ? Math.max(0, 100 - Math.round(latest.symptoms.reduce((total, symptom) => total + (symptom.severity ?? 2), 0) / latest.symptoms.length) * 10) : null;
+  return <section className="wellness-overview" aria-labelledby="wellness-title">
+    <div className="wellness-heading">
+      <div><p className="eyebrow">{copy.overview}</p><h2 id="wellness-title">{copy.title}</h2></div>
+      <p className="wellness-disclaimer">{copy.disclaimer}</p>
+    </div>
+    <div className="wellness-grid">
+      <section className="wellness-score-card"><p>{copy.latest}</p><strong>{currentScore ?? "—"} {currentScore && <small>/ 100</small>}</strong><span>{currentScore ? `${change >= 0 ? "↑" : "↓"} ${Math.abs(change)}% from the prior check-in` : copy.start}</span><p className="wellness-status">{currentScore ? evaluation?.level && evaluation.level >= 3 ? "Needs prompt follow-up based on the latest check-in" : "Consistent with your recent reported symptoms" : copy.noData}</p></section>
+      <section className="wellness-signals" aria-label={copy.overview}><div><span>{copy.symptoms}</span><strong>{severitySignal ?? "—"}</strong></div><div><span>{copy.safety}</span><strong>{evaluation ? Math.max(0, 100 - evaluation.level * 18) : "—"}</strong></div><div><span>{copy.voice}</span><strong>{latest?.source === "voice" ? "On" : "—"}</strong></div><div><span>{copy.checkins}</span><strong>{checkins.length}</strong></div><div><span>{copy.consistency}</span><strong>{checkins.length ? consistency : "—"}</strong></div></section>
+    </div>
+    <section className="wellness-chart-card"><div className="wellness-chart-heading"><div><h3>{copy.trend}</h3><p>{copy.personalScore} — {range} days</p></div><div className="trend-range" aria-label={copy.trend}><button className={range === 7 ? "selected" : ""} onClick={() => setRange(7)}>7</button><button className={range === 14 ? "selected" : ""} onClick={() => setRange(14)}>14</button><button className={range === 30 ? "selected" : ""} onClick={() => setRange(30)}>30</button></div></div>{points.length ? <><div className="chart-wrap"><svg viewBox="0 0 100 100" role="img" aria-label={`${copy.title} ${points[selected]}`} preserveAspectRatio="none"><polyline points={coordinates} /></svg><div className="chart-points">{points.map((score, index) => <button key={`${score}-${index}`} style={{ left: `${(index / Math.max(1, points.length - 1)) * 100}%`, bottom: `${((score - 35) / 65) * 100}%` }} onMouseEnter={() => setHoveredPoint(index)} onFocus={() => setHoveredPoint(index)} aria-label={`${copy.checkins} ${index + 1}: ${score}`} />)}</div><p className="chart-tooltip">{copy.checkins} {selected + 1}: <strong>{points[selected]}</strong></p></div><p className="ai-insight"><strong>{copy.insight}:</strong> {change >= 0 ? "Your latest symptom report is stable or improved from the prior check-in." : "Your latest symptom report has changed from the prior check-in; review the suggested action."}</p></> : <p className="muted chart-empty">{copy.noTrend}</p>}</section>
+    <section className="ai-insights"><div className="section-heading"><div><p className="eyebrow">{copy.how}</p><h3>✨ {copy.assisted}</h3></div><span>{evaluation ? `Extraction confidence ${Math.round(evaluation.confidence * 100)}%` : copy.noData}</span></div><div className="insight-grid"><article><h4>What is used</h4><p>Symptoms, reported severity, check-in frequency, and the safety evaluation.</p></article><article><h4>What is not assumed</h4><p>We do not infer vitals, cognitive status, mood, or voice changes unless you record them.</p></article><article><h4>{copy.baseline}</h4><p>The score compares a person’s own reported check-ins, not generic health thresholds.</p></article></div><p className="baseline-note">{copy.baseline}</p></section>
+  </section>;
+}
+
 function Dashboard({
   senior,
   plan,
@@ -951,7 +992,7 @@ function Dashboard({
             className={page === "plan" ? "nav-active" : ""}
             onClick={() => setPage("plan")}
           >
-            {t("plan")}
+            {t("care")}
           </button>
           <button
             className={page === "history" ? "nav-active" : ""}
@@ -1035,8 +1076,10 @@ function Dashboard({
       )}
       {page === "plan" && (
         <main className="dashboard">
+          <h1 className="care-page-title">{t("care")}</h1>
+          <WellnessOverview checkins={checkins} evaluation={evaluation} />
           <div className="page-title-row">
-            <h1>{t("plan")}</h1>
+            <h2>{t("plan")}</h2>
             <button className="secondary-button compact-button" type="button" onClick={() => setEditingPlan((editing) => !editing)}>{editingPlan ? "Done editing" : "Edit care plan"}</button>
           </div>
           {editingPlan && <section className="checkin-card care-plan-editor">
@@ -1081,7 +1124,7 @@ function Dashboard({
       )}
       {page === "history" && (
         <main className="dashboard">
-          <h1>{t("history")}</h1>
+          <div className="page-title-row page-heading"><h1>{t("history")}</h1></div>
           <section className="symptom-trends" aria-label="Recurring symptoms">
             <h2>Recurring symptoms</h2>
             {Object.keys(symptomCounts).length ? Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{label}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>) : <p className="muted">Your recurring symptoms will appear here after you record them.</p>}
