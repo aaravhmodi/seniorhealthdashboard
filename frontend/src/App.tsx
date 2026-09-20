@@ -107,23 +107,69 @@ function followUpText(key: FollowUpKey, language: string) {
 }
 
 function pdfEscape(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
 }
-function makeHandoffPdf(lines: string[]) {
-  const chunks: string[] = [];
-  let y = 780;
-  for (const line of lines.join("\n").split("\n")) {
-    const safe = pdfEscape(line.slice(0, 115));
-    chunks.push(`BT /F1 10 Tf 48 ${y} Td (${safe}) Tj ET`);
-    y -= 14;
-    if (y < 48) break;
+function wrapPdfText(value: string, limit = 82) {
+  const words = pdfEscape(value).split(/\s+/).filter(Boolean);
+  const rows: string[] = [];
+  let row = "";
+  for (const word of words) {
+    if (`${row} ${word}`.trim().length > limit && row) {
+      rows.push(row);
+      row = word;
+    } else row = `${row} ${word}`.trim();
   }
+  if (row) rows.push(row);
+  return rows;
+}
+function makeHandoffPdf(data: { patient: string; age: number; createdAt: string; action: string; summary: string; redFlags: string[]; medications: string[]; allergies: string[]; conditions: string[]; actions: string[] }) {
+  const chunks: string[] = [
+    "q 0.075 0.22 0.18 rg 0 734 612 94 re f Q",
+    "q 0.87 0.95 0.90 rg 0 706 612 28 re f Q",
+    "BT /F2 25 Tf 1 1 1 rg 44 786 Td (carepath) Tj ET",
+    "BT /F1 10 Tf 0.79 0.9 0.84 rg 44 766 Td (PROVIDER HANDOVER) Tj ET",
+    `BT /F1 9 Tf 0.18 0.32 0.27 rg 44 716 Td (Prepared ${pdfEscape(data.createdAt)}) Tj ET`,
+  ];
+  const text = (value: string, x: number, y: number, size = 10, bold = false, color = "0.10 0.22 0.18") => chunks.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  const card = (top: number, height: number, title: string, accent = "0.12 0.45 0.34") => {
+    chunks.push(`q 0.95 0.97 0.95 rg 38 ${top - height} 536 ${height} re f Q`);
+    chunks.push(`q ${accent} rg 38 ${top - height} 5 ${height} re f Q`);
+    text(title.toUpperCase(), 58, top - 22, 9, true, accent);
+  };
+  card(690, 78, "Patient");
+  text(data.patient, 58, 642, 18, true);
+  text(`Age ${data.age}  |  ${data.action}`, 58, 620, 10, false, "0.31 0.42 0.37");
+  let y = 586;
+  const section = (title: string, body: string[], accent?: string) => {
+    const rows = body.flatMap((item) => wrapPdfText(item));
+    const height = Math.max(58, 34 + rows.length * 13);
+    card(y, height, title, accent);
+    let rowY = y - 42;
+    rows.forEach((row) => { text(row, 58, rowY, 10); rowY -= 13; });
+    y -= height + 12;
+  };
+  section("Clinical summary", [data.summary]);
+  if (data.redFlags.length) section("Reported safety flags", data.redFlags.map((flag) => `- ${flag}`), "0.73 0.25 0.22");
+  section("Suggested action", data.actions.length ? data.actions.map((action) => `- ${action}`) : [data.action], "0.12 0.45 0.34");
+  section("Health context", [
+    `Medicines: ${data.medications.join(", ") || "None recorded"}`,
+    `Allergies: ${data.allergies.join(", ") || "None recorded"}`,
+    `Conditions: ${data.conditions.join(", ") || "None recorded"}`,
+  ]);
+  text("Decision support only. Review alongside your clinical assessment.", 44, 30, 8, false, "0.32 0.42 0.37");
   const stream = chunks.join("\n");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 828] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 828] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
   ];
   let pdf = "%PDF-1.4\n";
@@ -1132,21 +1178,18 @@ function Dashboard({
     setError("");
     try {
       const packet = await api.handoff(senior.id);
-      const flags = packet.red_flags.map((flag) => `- ${flag.label}`).join("\n") || "- None recorded";
-      const medications = packet.medications.map((medication) => `- ${medication.name}${medication.dose ? ` (${medication.dose})` : ""}`).join("\n") || "- None recorded";
-      const blob = makeHandoffPdf([
-        "CarePath nurse handoff",
-        `Patient: ${senior.display_name} (${senior.age})`,
-        `Created: ${packet.created_at}`,
-        `Action level: ${packet.level}`,
-        `Presenting complaint: ${packet.presenting_complaint}`,
-        "",
-        "Summary:", packet.patient_summary_en,
-        "", "Red flags:", flags,
-        "", "Medications:", medications,
-        `Allergies: ${packet.allergies.join(", ") || "None recorded"}`,
-        "", packet.disclaimer,
-      ]);
+      const blob = makeHandoffPdf({
+        patient: senior.display_name,
+        age: senior.age,
+        createdAt: new Date(packet.created_at).toLocaleString("en-US"),
+        action: evaluation.level_label,
+        summary: packet.patient_summary_en || packet.presenting_complaint,
+        redFlags: packet.red_flags.map((flag) => flag.label),
+        actions: evaluation.recommended_actions,
+        medications: packet.medications.map((medication) => `${medication.name}${medication.dose ? ` (${medication.dose})` : ""}`),
+        allergies: packet.allergies,
+        conditions: packet.conditions,
+      });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
