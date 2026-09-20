@@ -20,6 +20,14 @@ export interface EvidenceCard {
   stat?: { value: number; unit: string; n?: number; ci_low?: number; ci_high?: number }
 }
 export interface CheckInResponse { checkin: CheckIn; evaluation: Evaluation }
+export interface HandoffPacket {
+  id: string; senior_id: string; created_at: string; language: string;
+  patient_summary_en: string; patient_summary_translated: string;
+  presenting_complaint: string; level: ActionLevel;
+  red_flags: { code: string; label: string; matched_on?: string[] }[];
+  medications: Medication[]; allergies: string[]; conditions: string[];
+  recent_checkins: CheckIn[]; disclaimer: string;
+}
 
 // -- Caregiver view (opened from the link in a Linq text) -------------------
 export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }

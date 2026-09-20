@@ -1,4 +1,4 @@
-import type { CaregiverView, CheckIn, CheckInResponse, Senior } from './types'
+import type { CaregiverView, CheckIn, CheckInResponse, HandoffPacket, Senior } from './types'
 import { accessToken } from './supabase'
 
 const base = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
@@ -24,4 +24,5 @@ export const api = {
   checkin: (id: string, language: string) => request<CheckInResponse>(`/checkins/${id}?language=${encodeURIComponent(language)}`),
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
+  handoff: (id: string) => request<HandoffPacket>(`/handoff/${id}`),
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
+  Download,
   Globe2,
   HeartPulse,
   LogOut,
@@ -61,6 +62,7 @@ function displayCheckinText(text: string | undefined, language: string) {
 }
 
 type FollowUpKey = "back-severity" | "back-warning-signs";
+type ConversationTurn = { speaker: "senior" | "carepath"; text: string };
 const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
   "back-severity": {
     en: "How bad is the back pain from 0 to 10, and did it start suddenly?",
@@ -79,6 +81,39 @@ const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
 };
 function followUpText(key: FollowUpKey, language: string) {
   return followUpPrompts[key][language] || followUpPrompts[key].en;
+}
+
+function pdfEscape(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+function makeHandoffPdf(lines: string[]) {
+  const chunks: string[] = [];
+  let y = 780;
+  for (const line of lines.join("\n").split("\n")) {
+    const safe = pdfEscape(line.slice(0, 115));
+    chunks.push(`BT /F1 10 Tf 48 ${y} Td (${safe}) Tj ET`);
+    y -= 14;
+    if (y < 48) break;
+  }
+  const stream = chunks.join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 828] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index < offsets.length; index += 1) pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([pdf], { type: "application/pdf" });
 }
 
 const emptyCarePlan: CarePlan = { routines: [], instructions: [], appointments: [] };
@@ -603,6 +638,8 @@ function Dashboard({
   const [saving, setSaving] = useState(false);
   const [listening, setListening] = useState(false);
   const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
+  const [conversationTurns, setConversationTurns] = useState<ConversationTurn[]>([]);
+  const [downloadingHandoff, setDownloadingHandoff] = useState(false);
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
   const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
   const languageLoaded = useRef(false);
@@ -657,6 +694,7 @@ function Dashboard({
     if (!text.trim() || saving) return;
     setSaving(true);
     setError("");
+    const askedKey = followUpKey;
     try {
       if (!profileRegistered.current) {
         await api.createSenior(senior);
@@ -670,6 +708,11 @@ function Dashboard({
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
+      setConversationTurns((current) => [
+        ...current,
+        ...(askedKey ? [{ speaker: "carepath" as const, text: followUpText(askedKey, i18n.language) }] : []),
+        { speaker: "senior" as const, text: text.trim() },
+      ]);
       if (followUpKey === "back-severity") {
         setFollowUpKey("back-warning-signs");
       } else if (followUpKey === "back-warning-signs") {
@@ -685,6 +728,39 @@ function Dashboard({
       setError(`This check-in could not be saved. Please start the health service and try again.${detail}`);
     } finally {
       setSaving(false);
+    }
+  };
+  const downloadHandoff = async () => {
+    if (!evaluation || evaluation.level < 3 || downloadingHandoff) return;
+    setDownloadingHandoff(true);
+    setError("");
+    try {
+      const packet = await api.handoff(senior.id);
+      const flags = packet.red_flags.map((flag) => `- ${flag.label}`).join("\n") || "- None recorded";
+      const medications = packet.medications.map((medication) => `- ${medication.name}${medication.dose ? ` (${medication.dose})` : ""}`).join("\n") || "- None recorded";
+      const blob = makeHandoffPdf([
+        "CarePath nurse handoff",
+        `Patient: ${senior.display_name} (${senior.age})`,
+        `Created: ${packet.created_at}`,
+        `Action level: ${packet.level}`,
+        `Presenting complaint: ${packet.presenting_complaint}`,
+        "",
+        "Summary:", packet.patient_summary_en,
+        "", "Red flags:", flags,
+        "", "Medications:", medications,
+        `Allergies: ${packet.allergies.join(", ") || "None recorded"}`,
+        "", packet.disclaimer,
+      ]);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `carepath-handoff-${senior.id}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setError(`The nurse handoff could not be downloaded${reason instanceof Error ? `: ${reason.message}` : "."}`);
+    } finally {
+      setDownloadingHandoff(false);
     }
   };
   const openCheckin = async (checkin: CheckIn) => {
@@ -820,6 +896,14 @@ function Dashboard({
             {listening && <p className="live-transcript" role="status">{t("listening")}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
           </section>
+          {conversationTurns.length > 0 && (
+            <section className="conversation-card" aria-label="Conversation">
+              <div className="section-heading"><h2>Conversation</h2><span className="language-status">Safety questions are checked after every answer</span></div>
+              <div className="conversation-turns">
+                {conversationTurns.map((turn, index) => <p className={turn.speaker === "carepath" ? "carepath-turn" : "senior-turn"} key={`${index}-${turn.text}`}><strong>{turn.speaker === "carepath" ? "CarePath" : senior.display_name.split(" ")[0]}:</strong> {turn.text}</p>)}
+              </div>
+            </section>
+          )}
           {evaluation && <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
             <div className="guidance-content">
               <p className="guidance-level">{evaluation.level_label}</p>
@@ -830,6 +914,7 @@ function Dashboard({
                   {evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}
                 </ul>
               )}
+              {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? "Preparing handoff..." : "Download nurse handoff PDF"}</button>}
             </div>
           </section>}
         </main>
