@@ -484,8 +484,11 @@ class LinqInbound(BaseModel):
 
 class ReminderRequest(BaseModel):
     senior_id: str
-    kind: Literal["meds", "appointment", "refill", "weather", "caregiver_update"] = "meds"
+    kind: Literal["meds", "appointment", "refill", "caregiver_update"] = "meds"
     language: str = "en"
+    # Legacy callers without a recipient choice keep the original care-circle
+    # behavior; the dashboard always supplies the patient's chosen option.
+    recipient: Literal["self", "caregiver", "both"] = "both"
 
 
 class ReminderResponse(BaseModel):

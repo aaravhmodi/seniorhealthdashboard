@@ -71,7 +71,7 @@ function displayCheckinText(text: string | undefined, language: string) {
 }
 
 type FollowUpKey = "back-severity" | "back-warning-signs";
-type ConversationTurn = { speaker: "senior" | "carepath"; text: string };
+type FollowUpRecord = { question: string; answer: string; checkinId: string };
 const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
   "back-severity": {
     en: "How bad is the back pain from 0 to 10, and did it start suddenly?",
@@ -149,16 +149,18 @@ function Field({
   label,
   type = "text",
   required = false,
+  defaultValue,
 }: {
   id: string;
   label: string;
   type?: string;
   required?: boolean;
+  defaultValue?: string;
 }) {
   return (
     <div>
       <label htmlFor={id}>{label}</label>
-      <input id={id} name={id} type={type} required={required} />
+      <input id={id} name={id} type={type} required={required} defaultValue={defaultValue} />
     </div>
   );
 }
@@ -280,7 +282,7 @@ function Signup({
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
-  const steps = [t("account"), t("about"), t("healthInfo"), t("plan"), t("emergency")];
+  const steps = [t("account"), t("about"), t("healthInfo"), t("plan"), t("emergencyCaregiver")];
 
   function moveTo(nextStep: number) {
     setError("");
@@ -496,8 +498,8 @@ function Signup({
             </div>
           </section>
           <section hidden={step !== 4} aria-labelledby="signup-emergency">
-            <h2 id="signup-emergency">{t("emergency")}</h2>
-            <p>{t("oneThing")}</p>
+            <h2 id="signup-emergency">{t("emergencyCaregiver")}</h2>
+            <p>{t("caregiverDescription")}</p>
             <div className="form-grid">
               <Field id="contact-name" label={t("fullName")} />
               <Field id="relationship" label={t("relationship")} />
@@ -544,13 +546,19 @@ function Profile({
   senior,
   plan,
   onClose,
+  onSave,
 }: {
   senior: Senior;
   plan: CarePlan;
   onClose: () => void;
+  onSave: (updated: Senior) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const contact = senior.caregivers?.[0];
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [editableMedications, setEditableMedications] = useState(senior.medications);
   const Section = ({ title, values }: { title: string; values: string[] }) => (
     <section className="profile-section">
       <h3>{title}</h3>
@@ -583,11 +591,54 @@ function Profile({
         <div className="profile-header">
           <h2>{senior.display_name}</h2>
           <p>
-            {senior.age} · {senior.gender || t("genderOptional")}
+            {senior.age} · {senior.gender || t("genderOptional")} · {senior.date_of_birth}
             <br />
             {senior.phone_e164}
           </p>
+          <button className="secondary-button profile-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
+            {editing ? t("cancel") : t("editProfile")}
+          </button>
         </div>
+        {editing ? (
+          <form className="profile-edit-form" onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const medications = editableMedications.filter((medication) => medication.name.trim());
+            const updated: Senior = {
+              ...senior,
+              display_name: String(form.get("name") || senior.display_name),
+              phone_e164: String(form.get("phone") || senior.phone_e164),
+              gender: String(form.get("gender") || ""),
+              conditions: splitList(form.get("conditions")),
+              allergies: splitList(form.get("allergies")),
+              medications,
+              caregivers: [{
+                id: contact?.id || "contact",
+                name: String(form.get("contact-name") || ""),
+                relationship: String(form.get("relationship") || ""),
+                phone_e164: String(form.get("contact-phone") || ""),
+              }].filter((caregiver) => caregiver.name && caregiver.relationship && caregiver.phone_e164),
+            };
+            setSaving(true);
+            setSaveError("");
+            void onSave(updated).then(() => setEditing(false)).catch(() => setSaveError("We could not save those changes. Please try again.")).finally(() => setSaving(false));
+          }}>
+            <div className="form-grid">
+              <Field id="name" label={t("fullName")} required defaultValue={senior.display_name} />
+              <Field id="phone" label={t("phone")} type="tel" required defaultValue={senior.phone_e164} />
+              <div><label htmlFor="profile-gender">{t("gender")}</label><select className="form-select" id="profile-gender" name="gender" defaultValue={senior.gender || ""}><option value="">{t("genderOptional")}</option><option>{t("woman")}</option><option>{t("man")}</option><option>{t("nonBinary")}</option><option>{t("selfDescribe")}</option></select></div>
+              <div><Field id="conditions" label={t("conditions")} defaultValue={senior.conditions.join(", ")} /><p className="field-help">Separate items with commas.</p></div>
+              <div className="full"><Field id="allergies" label={t("allergies")} defaultValue={senior.allergies.join(", ")} /><p className="field-help">Separate items with commas.</p></div>
+              <div className="full medication-editor"><div className="medication-heading"><h3>{t("medications")}</h3><button className="add-medication" type="button" onClick={() => setEditableMedications((current) => [...current, { id: crypto.randomUUID(), name: "", dose: "", schedule: "" }])}>{t("add")}</button></div>{editableMedications.map((medication, index) => <fieldset className="medication-entry" key={medication.id}><legend>{t("medications")} {index + 1}</legend><div className="form-grid"><div><label htmlFor={`edit-med-name-${medication.id}`}>{t("medicineName")}</label><input id={`edit-med-name-${medication.id}`} value={medication.name} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, name: event.target.value } : item))} /></div><div><label htmlFor={`edit-med-dose-${medication.id}`}>{t("dose")}</label><input id={`edit-med-dose-${medication.id}`} value={medication.dose || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, dose: event.target.value } : item))} /></div><div className="full"><label htmlFor={`edit-med-schedule-${medication.id}`}>{t("schedule")}</label><input id={`edit-med-schedule-${medication.id}`} value={medication.schedule || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, schedule: event.target.value } : item))} /></div></div>{editableMedications.length > 1 && <button className="remove-medication" type="button" onClick={() => setEditableMedications((current) => current.filter((item) => item.id !== medication.id))}>Remove</button>}</fieldset>)}</div>
+              <div className="full"><h3>{t("emergencyCaregiver")}</h3></div>
+              <Field id="contact-name" label={t("fullName")} defaultValue={contact?.name || ""} />
+              <Field id="relationship" label={t("relationship")} defaultValue={contact?.relationship || ""} />
+              <div className="full"><Field id="contact-phone" label={t("phone")} type="tel" defaultValue={contact?.phone_e164 || ""} /></div>
+            </div>
+            {saveError && <p className="form-error" role="alert">{saveError}</p>}
+            <button className="primary-button" disabled={saving}>{saving ? "Saving…" : t("saveChanges")}</button>
+          </form>
+        ) : (
         <div className="profile-grid">
           <Section title={t("conditions")} values={senior.conditions} />
           <Section title={t("allergies")} values={senior.allergies} />
@@ -616,13 +667,15 @@ function Profile({
           />
           {contact && (
             <Section
-              title={t("emergency")}
+              title={t("emergencyCaregiver")}
               values={[
                 `${contact.name} · ${contact.relationship} · ${contact.phone_e164}`,
+                t("caregiverDescription"),
               ]}
             />
           )}
         </div>
+        )}
       </section>
     </div>
   );
@@ -632,10 +685,12 @@ function Dashboard({
   senior,
   plan,
   onSignOut,
+  onProfileSave,
 }: {
   senior: Senior;
   plan: CarePlan;
   onSignOut: () => void;
+  onProfileSave: (updated: Senior) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation();
   const [page, setPage] = useState<"health" | "plan" | "history">("health");
@@ -646,10 +701,17 @@ function Dashboard({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [listening, setListening] = useState(false);
+  const [editingPlan, setEditingPlan] = useState(false);
+  const [routineDraft, setRoutineDraft] = useState(plan.routines.join(", "));
+  const [instructionDraft, setInstructionDraft] = useState(plan.instructions.join(", "));
+  const [appointmentDraft, setAppointmentDraft] = useState({ title: "", date: "", location: "" });
   const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
-  const [conversationTurns, setConversationTurns] = useState<ConversationTurn[]>([]);
+  const [followUpForId, setFollowUpForId] = useState<string | null>(null);
+  const [followUpRecords, setFollowUpRecords] = useState<Record<string, FollowUpRecord[]>>(() => savedValue<Record<string, FollowUpRecord[]>>(`carepath-followups:${senior.id}`) || {});
   const [downloadingHandoff, setDownloadingHandoff] = useState(false);
-  const [reminderKind, setReminderKind] = useState("meds");
+  const reminderKind = "meds";
+  const [reminderMedicationId, setReminderMedicationId] = useState("");
+  const [reminderRecipient, setReminderRecipient] = useState<"self" | "caregiver" | "both">("self");
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState("");
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
@@ -661,6 +723,10 @@ function Dashboard({
   const messageRef = useRef("");
   const profileRegistered = useRef(false);
   const guidanceTone = evaluation && (evaluation.level >= 4 ? "emergency" : evaluation.level >= 3 ? "urgent" : evaluation.level === 2 ? "watch" : "calm");
+  const symptomCounts = checkins.flatMap((checkin) => checkin.symptoms.map((symptom) => symptom.label)).reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: (counts[label] || 0) + 1 }), {});
+  const highestSymptomCount = Math.max(1, ...Object.values(symptomCounts));
+  const followUpAnswerIds = new Set(Object.values(followUpRecords).flatMap((records) => records.map((record) => record.checkinId)));
+  const historyCheckins = checkins.filter((checkin) => !followUpAnswerIds.has(checkin.id));
   useEffect(() => {
     const voiceLanguage = (event: Event) =>
       i18n.changeLanguage(
@@ -692,6 +758,9 @@ function Dashboard({
     if (languageLoaded.current) localStorage.setItem(`carepath-language:${senior.id}`, supportedLanguage(i18n.language));
   }, [i18n.language, senior.id]);
   useEffect(() => {
+    localStorage.setItem(`carepath-followups:${senior.id}`, JSON.stringify(followUpRecords));
+  }, [followUpRecords, senior.id]);
+  useEffect(() => {
     const latest = checkins[0];
     if (!latest || !evaluation) return;
     void api.checkin(latest.id, i18n.language)
@@ -722,19 +791,23 @@ function Dashboard({
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
-      setConversationTurns((current) => [
-        ...current,
-        ...(askedKey ? [{ speaker: "carepath" as const, text: followUpText(askedKey, i18n.language) }] : []),
-        { speaker: "senior" as const, text: text.trim() },
-      ]);
-      if (followUpKey === "back-severity") {
+      if (askedKey && followUpForId) {
+        setFollowUpRecords((current) => ({
+          ...current,
+          [followUpForId]: [...(current[followUpForId] || []), { question: followUpText(askedKey, i18n.language), answer: text.trim(), checkinId: result.checkin.id }],
+        }));
+      }
+      if (askedKey === "back-severity") {
         setFollowUpKey("back-warning-signs");
-      } else if (followUpKey === "back-warning-signs") {
+      } else if (askedKey === "back-warning-signs") {
         setFollowUpKey(null);
+        setFollowUpForId(null);
       } else if (result.checkin.symptoms.some((symptom) => symptom.label === "back pain")) {
         setFollowUpKey("back-severity");
+        setFollowUpForId(result.checkin.id);
       } else {
         setFollowUpKey(null);
+        setFollowUpForId(null);
       }
       updateMessage("");
     } catch (reason) {
@@ -781,8 +854,8 @@ function Dashboard({
     setSendingReminder(true);
     setReminderStatus("");
     try {
-      const result = await api.sendReminder(senior.id, reminderKind, i18n.language);
-      const recipients = result.recipients?.length ? ` to ${result.recipients.length} phones (senior + caregiver)` : ` to ${result.recipient || "the care circle"}`;
+      const result = await api.sendReminder(senior.id, reminderKind, i18n.language, reminderRecipient);
+      const recipients = result.recipients?.length ? ` to ${result.recipients.length} phone${result.recipients.length === 1 ? "" : "s"}` : ` to ${result.recipient || "the care circle"}`;
       setReminderStatus(result.ok ? `${result.mocked ? "Demo message queued" : "Message sent"}${recipients}. Reply DONE is expected.` : (result.error || "Message was not sent."));
     } catch (reason) {
       setReminderStatus(reason instanceof Error ? reason.message : "Message was not sent.");
@@ -905,7 +978,7 @@ function Dashboard({
                 <p className="helper-text">Your answer helps us choose the safest next step.</p>
               </div>
             )}
-            <h2>{t("tell")}</h2>
+            <h2>{followUpKey ? "Your answer" : t("tell")}</h2>
             <textarea
               value={message}
               onChange={(event) => updateMessage(event.target.value)}
@@ -926,38 +999,6 @@ function Dashboard({
             </div>
             {listening && <p className="live-transcript" role="status">{t("listening")}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
-          </section>
-          {conversationTurns.length > 0 && (
-            <section className="conversation-card" aria-label="Conversation">
-              <div className="section-heading"><h2>Conversation</h2><span className="language-status">Safety questions are checked after every answer</span></div>
-              <div className="conversation-turns">
-                {conversationTurns.map((turn, index) => <p className={turn.speaker === "carepath" ? "carepath-turn" : "senior-turn"} key={`${index}-${turn.text}`}><strong>{turn.speaker === "carepath" ? "CarePath" : senior.display_name.split(" ")[0]}:</strong> {turn.text}</p>)}
-              </div>
-            </section>
-          )}
-          <section className="reminder-card">
-            <div>
-              <p className="eyebrow">Linq family messaging</p>
-              <h2>Text + read-aloud reminders</h2>
-              <p className="helper-text">Medication, appointment, refill, weather, and caregiver updates are texted to the senior and the first consented caregiver. The local demo uses Docker mock delivery.</p>
-            </div>
-            <div className="reminder-actions">
-              <select value={reminderKind} onChange={(event) => setReminderKind(event.target.value)} aria-label="Reminder type">
-                <option value="meds">Morning pills</option>
-                <option value="appointment">Appointment</option>
-                <option value="refill">Refill</option>
-                <option value="weather">Weather</option>
-                <option value="caregiver_update">Caregiver update</option>
-              </select>
-              <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder}>
-                {sendingReminder ? "Sending..." : "Send to phone"}
-              </button>
-            </div>
-            {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
-            <button className="text-button reminder-preview" type="button" onClick={() => {
-              const text = reminderKind === "meds" ? "Good morning. Just a gentle reminder to take your morning pills. Reply DONE when you have taken them." : reminderKind === "appointment" ? "Hi there. Just a friendly reminder about your appointment. Reply DONE when you have seen it." : reminderKind === "refill" ? "Hi there. Your refill reminder is ready. Reply DONE when you have seen it." : reminderKind === "caregiver_update" ? "Hi there. Your care team has a quick update for you. Reply DONE when you have seen it." : "Good morning. I have a quick weather reminder for you. Reply DONE when you have seen it.";
-              if (!speakText(text, i18n.language)) setReminderStatus("Read-aloud is not available in this browser.");
-            }}>🔊 Read this reminder aloud</button>
           </section>
           {evaluation && <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
             <div className="guidance-content">
@@ -981,7 +1022,17 @@ function Dashboard({
       )}
       {page === "plan" && (
         <main className="dashboard">
-          <h1>{t("plan")}</h1>
+          <div className="page-title-row">
+            <h1>{t("plan")}</h1>
+            <button className="secondary-button compact-button" type="button" onClick={() => setEditingPlan((editing) => !editing)}>{editingPlan ? "Done editing" : "Edit care plan"}</button>
+          </div>
+          {editingPlan && <section className="checkin-card care-plan-editor">
+            <label>Daily habits or diet</label><textarea value={routineDraft} onChange={(event) => setRoutineDraft(event.target.value)} />
+            <label>Care instructions</label><textarea value={instructionDraft} onChange={(event) => setInstructionDraft(event.target.value)} />
+            <h2>Add an appointment</h2>
+            <div className="form-grid"><div><label htmlFor="appointment-title">{t("appointment")}</label><input id="appointment-title" value={appointmentDraft.title} onChange={(event) => setAppointmentDraft((current) => ({ ...current, title: event.target.value }))} /></div><div><label htmlFor="appointment-date">{t("dateTime")}</label><input id="appointment-date" type="datetime-local" value={appointmentDraft.date} onChange={(event) => setAppointmentDraft((current) => ({ ...current, date: event.target.value }))} /></div><div className="full"><label htmlFor="appointment-location">{t("location")}</label><input id="appointment-location" value={appointmentDraft.location} onChange={(event) => setAppointmentDraft((current) => ({ ...current, location: event.target.value }))} /></div></div>
+            <button className="primary-button" type="button" onClick={() => { plan.routines = splitList(routineDraft); plan.instructions = splitList(instructionDraft); if (appointmentDraft.title.trim()) plan.appointments = [...plan.appointments, { id: crypto.randomUUID(), title: appointmentDraft.title.trim(), date: appointmentDraft.date, location: appointmentDraft.location.trim() }]; localStorage.setItem(`carepath-plan:${senior.id}`, JSON.stringify(plan)); setAppointmentDraft({ title: "", date: "", location: "" }); setEditingPlan(false); }}>Save care plan</button>
+          </section>}
           <PlanSection title={t("dailyRoutine")} values={plan.routines} />
           <PlanSection title={t("instructions")} values={plan.instructions} />
           <PlanSection
@@ -990,12 +1041,39 @@ function Dashboard({
               (item) => `${item.title} · ${item.date}`,
             )}
           />
+          <section className="reminder-card">
+            <div>
+              <p className="eyebrow">{t("textReminders")}</p>
+              <h2>{t("sendTextReminder")}</h2>
+              <p className="helper-text">{t("reminderDescription")}</p>
+            </div>
+            <div className="reminder-actions">
+              <label className="sr-only" htmlFor="reminder-medication">{t("medications")}</label>
+              <select id="reminder-medication" value={reminderMedicationId || senior.medications[0]?.id || ""} onChange={(event) => setReminderMedicationId(event.target.value)} disabled={!senior.medications.length}>
+                {senior.medications.length ? senior.medications.map((medication) => <option key={medication.id} value={medication.id}>{medication.name}</option>) : <option value="">Add a medication in your profile</option>}
+              </select>
+              <label className="sr-only" htmlFor="reminder-recipient">{t("reminderRecipient")}</label>
+              <select id="reminder-recipient" value={reminderRecipient} onChange={(event) => setReminderRecipient(event.target.value as "self" | "caregiver" | "both")}>
+                <option value="self">{t("me")}</option>
+                <option value="caregiver" disabled={!senior.caregivers?.[0]}>{t("caregiver")}</option>
+                <option value="both" disabled={!senior.caregivers?.[0]}>{t("meAndCaregiver")}</option>
+              </select>
+              <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || !senior.medications.length}>
+                {sendingReminder ? "Sending..." : t("sendText")}
+              </button>
+            </div>
+            {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
+          </section>
         </main>
       )}
       {page === "history" && (
         <main className="dashboard">
           <h1>{t("history")}</h1>
-          {checkins.map((checkin) => (
+          {Object.keys(symptomCounts).length > 0 && <section className="symptom-trends" aria-label="Recurring symptoms">
+            <h2>Recurring symptoms</h2>
+            {Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{label}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>)}
+          </section>}
+          {historyCheckins.map((checkin) => (
             <article className="history-record" key={checkin.id}>
               <button className="history-record-button" type="button" onClick={() => void openCheckin(checkin)} aria-expanded={expandedCheckin === checkin.id}>
                 <strong>{checkin.symptoms.map((symptom) => t(`symptom.${symptom.label}`, { defaultValue: symptom.label })).join(", ") || t("check")}</strong>
@@ -1004,6 +1082,9 @@ function Dashboard({
               </button>
               {expandedCheckin === checkin.id && checkinDetails[checkin.id] && (
                 <div className="history-detail">
+                  <h2>{t("providerSummary")}</h2>
+                  <p>{displayCheckinText(checkin.raw_text, i18n.language)}</p>
+                  {followUpRecords[checkin.id]?.map((record, index) => <p key={`${record.question}-${index}`}><strong>{record.question}</strong><br />{record.answer}</p>)}
                   <h2>{t("suggestedAction")}</h2>
                   <p className="history-action-level">{checkinDetails[checkin.id].evaluation.level_label}</p>
                   <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
@@ -1026,6 +1107,7 @@ function Dashboard({
           senior={senior}
           plan={plan}
           onClose={() => setProfileOpen(false)}
+          onSave={onProfileSave}
         />
       )}
     </div>
@@ -1137,6 +1219,11 @@ function AccountApp() {
       senior={senior}
       plan={plan}
       onSignOut={() => setScreen("login")}
+      onProfileSave={async (updated) => {
+        await api.updateSenior(updated);
+        localStorage.setItem(`carepath-profile:${updated.id}`, JSON.stringify(updated));
+        setSenior(updated);
+      }}
     />
   ) : (
     <Login

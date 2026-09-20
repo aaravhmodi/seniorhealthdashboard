@@ -100,6 +100,17 @@ def create_senior(senior: Senior, _: auth.Principal = Depends(auth.require_user)
     return store.put_senior(senior)
 
 
+@router.put("/seniors/{senior_id}", response_model=Senior, tags=["seniors"])
+def update_senior(
+    senior_id: str, senior: Senior, _: auth.Principal = Depends(auth.require_user)
+) -> Senior:
+    """Replace a patient's editable profile details."""
+    _get_senior(senior_id)
+    if senior.id != senior_id:
+        raise HTTPException(status_code=400, detail="senior ID does not match the request path")
+    return store.put_senior(senior)
+
+
 @router.get("/seniors/{senior_id}", response_model=Senior, tags=["seniors"])
 def get_senior(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> Senior:
     return _get_senior(senior_id)
@@ -874,33 +885,42 @@ async def send_reminder(
     """
     senior = _get_senior(payload.senior_id)
     caregivers = circle.escalation_chain(senior, ActionLevel.CALL_CLINIC)
-    recipient = caregivers[0] if caregivers else None
-    recipient_numbers = list(dict.fromkeys(
-        [number for number in [senior.phone_e164, recipient.phone_e164 if recipient else None] if number]
-    ))
-    if not recipient_numbers:
-        raise HTTPException(status_code=409, detail="no senior or caregiver phone is enrolled")
+    caregiver = caregivers[0] if caregivers else None
+    recipient_phones: list[str] = []
+    if payload.recipient in {"self", "both"} and senior.phone_e164:
+        recipient_phones.append(senior.phone_e164)
+    if payload.recipient in {"caregiver", "both"} and caregiver and caregiver.phone_e164:
+        recipient_phones.append(caregiver.phone_e164)
+    # Preserve the original reminder behavior for older enrolled records that
+    # have no patient phone but do have a care-circle phone.
+    if payload.recipient == "self" and not recipient_phones and caregiver and caregiver.phone_e164:
+        recipient_phones.append(caregiver.phone_e164)
+    if not recipient_phones:
+        target = "emergency-contact caregiver" if payload.recipient == "caregiver" else "selected recipient"
+        raise HTTPException(status_code=409, detail=f"no phone is enrolled for the {target}")
     body = caretone.reminder_body(
         senior.display_name.split()[0], payload.kind, circle.detail_link(senior.id), payload.language
     )
     circle_state = store.circles.get(senior.id)
-    results = [await linq.send_direct(number, body) for number in recipient_numbers]
-    result = next((item for item in results if item.ok), results[0])
-    for number, delivery in zip(recipient_numbers, results):
-        if delivery.message_id:
-            store.reminders[delivery.message_id] = {
-                "senior_id": senior.id, "kind": payload.kind, "recipient": number,
-                "status": "sent" if delivery.ok else "failed", "body": body,
+    results = [await linq.send_direct(phone, body) for phone in dict.fromkeys(recipient_phones)]
+    for phone, result in zip(dict.fromkeys(recipient_phones), results):
+        if result.message_id:
+            store.reminders[result.message_id] = {
+                "senior_id": senior.id, "kind": payload.kind, "recipient": phone,
+                "status": "sent" if result.ok else "failed", "body": body,
             }
+    ok = all(result.ok for result in results)
+    message_ids = [result.message_id for result in results if result.message_id]
+    errors = [result.error for result in results if result.error]
     return ReminderResponse(
-        ok=all(item.ok for item in results),
-        mocked=result.mocked,
+        ok=ok,
+        mocked=all(result.mocked for result in results),
         kind=payload.kind,
-        recipient=recipient_numbers[0],
-        recipients=recipient_numbers,
-        message_id=result.message_id,
+        recipient=", ".join(dict.fromkeys(recipient_phones)),
+        recipients=list(dict.fromkeys(recipient_phones)),
+        message_id=message_ids[0] if message_ids else None,
         body=body,
-        error=result.error,
+        error="; ".join(errors) if errors else None,
     )
 
 

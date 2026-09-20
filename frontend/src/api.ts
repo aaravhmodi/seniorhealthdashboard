@@ -12,6 +12,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   createSenior: (senior: Senior) => request<Senior>('/seniors', { method: 'POST', body: JSON.stringify(senior) }),
+  updateSenior: (senior: Senior) => request<Senior>(`/seniors/${senior.id}`, { method: 'PUT', body: JSON.stringify(senior) }),
   senior: (id: string) => request<Senior>(`/seniors/${id}`),
   // The caregiver view, opened from the link in a Linq text. Everything the
   // SMS deliberately left out lives behind these three calls.
@@ -25,6 +26,6 @@ export const api = {
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
   handoff: (id: string) => request<HandoffPacket>(`/handoff/${id}`),
-  sendReminder: (senior_id: string, kind: string, language: string) =>
-    request<ReminderResponse>('/reminders/send', { method: 'POST', body: JSON.stringify({ senior_id, kind, language }) }),
+  sendReminder: (senior_id: string, kind: string, language: string, recipient: 'self' | 'caregiver' | 'both') =>
+    request<ReminderResponse>('/reminders/send', { method: 'POST', body: JSON.stringify({ senior_id, kind, language, recipient }) }),
 }
