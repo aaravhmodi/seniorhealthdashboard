@@ -35,6 +35,7 @@ from .datasets import lookup
 from .datasets import model as outcome_model
 from .datasets.narratives import features as narrative_features
 from .extraction import fold
+from .probes import choose as choose_probe
 from .rules import BLOOD_THINNERS, HEAD_STRIKE as SPOKEN_HEAD_STRIKE
 from .schemas import (
     ActionLevel,
@@ -688,8 +689,15 @@ def assess(
     baseline: BaselineSummary,
     flags: list[RedFlag],
     ladder_level: ActionLevel,
+    language: str = "en",
+    asked_recently: frozenset[str] = frozenset(),
 ) -> RiskAssessment:
-    """Rank what this could be, with a number and an action for each."""
+    """Rank what this could be, with a number and an action for each.
+
+    `asked_recently` is the set of probe codes already put to this person in
+    their last few check-ins; see `probes.choose` for why an unanswered-looking
+    probe has to be remembered rather than re-derived.
+    """
     metrics = outcome_model.status()
     model_risk = outcome_model.predict(checkin, senior)
     tokens = outcome_model.explain_tokens(checkin, senior) if model_risk is not None else []
@@ -718,9 +726,14 @@ def assess(
     )
 
     concerns: list[RiskConcern] = []
+    # What we looked for and did not find. "We checked and nothing stood out"
+    # is a different statement from a blank screen, and only one of the two is
+    # worth anything to someone who just told us they feel off.
+    screened: list[str] = []
     for concern in CONCERNS:
         matched = concern.trigger(ctx)
         if not matched:
+            screened.append(concern.label)
             continue
         base, base_detail = _base_rate(concern, ctx)
         drivers = list(concern.modifiers(ctx))
@@ -768,6 +781,11 @@ def assess(
         top_concern=top.code if top else None,
         overall_percent=max((c.probability_percent for c in concerns), default=None),
         bands=BANDS,
+        screened=screened,
+        follow_up=choose_probe(
+            ctx, concerns, language, asked_recently,
+            concern_labels={c.code: c.label for c in CONCERNS},
+        ),
         model_status=metrics.get("status", "unavailable") if model_risk is not None
         else "not_loaded",
         model_risk_percent=round(model_risk * 100, 1) if model_risk is not None else None,

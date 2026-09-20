@@ -24,9 +24,15 @@ from .schemas import (
 )
 from .risk import assess as assess_risk
 from .rules import evaluate_rules, rule_floor
-from .store import new_id, now
+from .store import new_id, now, store
 
 ENGINE_VERSION = "ladder-0.1-rules+mockevidence"
+
+# How many past check-ins a follow-up question is remembered for. Three is the
+# smallest number that stops the obvious loop -- ask, get "no", ask again
+# tomorrow -- without burying a question that has genuinely gone stale. A head
+# strike they said no to last Tuesday is worth asking about after a new fall.
+PROBE_MEMORY = 3
 
 # How much summed evidence weight it takes to earn each rung on its own.
 EVIDENCE_THRESHOLDS: list[tuple[float, ActionLevel]] = [
@@ -79,6 +85,24 @@ def _confidence(checkin: CheckIn, flags, evidence: list[EvidenceCard]) -> float:
     return round(max(0.05, min(0.99, score)), 2)
 
 
+def asked_recently(senior_id: str) -> frozenset[str]:
+    """Probe codes already put to this person in their last few check-ins.
+
+    Read off the stored evaluations rather than kept in a side table, so the
+    ledger cannot drift from what was actually shown on screen.
+    """
+    recent = sorted(
+        (e for e in store.evaluations.values() if e.senior_id == senior_id),
+        key=lambda e: e.created_at,
+        reverse=True,
+    )[:PROBE_MEMORY]
+    return frozenset(
+        e.risk.follow_up.code
+        for e in recent
+        if e.risk and e.risk.follow_up
+    )
+
+
 def evaluate(
     checkin: CheckIn,
     senior: Senior,
@@ -122,7 +146,11 @@ def evaluate(
     # What this could be, with a number on each and the action that number
     # earns. Runs after the rung is settled: it explains and ranks, and the
     # action it shows can only ever be the more urgent of the two.
-    risk = assess_risk(checkin, senior, baseline, flags, level)
+    risk = assess_risk(
+        checkin, senior, baseline, flags, level,
+        language=language or senior.preferred_language,
+        asked_recently=asked_recently(senior.id),
+    )
     if risk.concerns:
         wanted = max(int(c.action_level) for c in risk.concerns)
         if wanted > int(level):

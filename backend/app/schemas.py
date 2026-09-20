@@ -218,6 +218,30 @@ class RiskConcern(BaseModel):
     matched_on: list[str] = []        # what in the check-in triggered it
 
 
+class FollowUp(BaseModel):
+    """The one question we would most like answered next, and why.
+
+    Never decorative. Each probe in `risk.PROBES` is attached to a modifier
+    that is currently sitting on the table because we do not know the answer --
+    so `sharpens` is the odds multiplier that answering would put in play, and
+    `concern_code` names the concern it would move. A probe with `sharpens`
+    of 1.0 does not change the number at all; it changes what the handoff says,
+    and it says so.
+    """
+
+    code: str                         # "head_strike", stable across languages
+    question: str                     # already in the senior's language
+    why: str                          # what the answer changes, in plain words
+    concern_code: Optional[str] = None
+    concern_label: Optional[str] = None
+    sharpens: float = 1.0             # odds multiplier the answer could unlock
+    # True when a yes would *open* `concern_code` rather than sharpen it --
+    # the concern is absent from the list because nobody has asked yet, not
+    # because it was ruled out. The UI must not phrase those two the same way.
+    opens: bool = False
+    generic: bool = False             # the always-something fallback fired
+
+
 class RiskBand(BaseModel):
     band: str
     label: str
@@ -239,6 +263,12 @@ class RiskAssessment(BaseModel):
     top_concern: Optional[str] = None
     overall_percent: Optional[float] = None
     bands: list[RiskBand] = []
+    # Concerns we evaluated that did not fire. The panel shows these when
+    # nothing triggered, because "we looked and found nothing" is a different
+    # statement from an empty screen, and only one of them is reassuring.
+    screened: list[str] = []
+    # The question that would sharpen this the most. Always present.
+    follow_up: Optional[FollowUp] = None
     # Provenance for the fitted model.
     model_status: str = "unavailable"
     model_risk_percent: Optional[float] = None
