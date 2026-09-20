@@ -138,6 +138,34 @@ def test_a_dead_api_falls_back(with_key, monkeypatch):
     assert result.fallback_reason == "call failed"
 
 
+def test_caregiver_reply_rejects_vague_unnamed_action(with_key, monkeypatch):
+    """A caring tone must not turn into an invented promise that someone acts."""
+    link = "https://carepath.test/c/sen_rosa"
+    fake_chat(
+        monkeypatch,
+        f"Someone should make that call. We will take care of it. Details: {link}",
+    )
+    result = llm.caregiver_reply(
+        "Rosa", 2, "caregiver concern", link,
+        "I am worried and need help deciding what to do.",
+    )
+    assert result.used_model is False
+    assert result.fallback_reason == "caregiver reply rejected"
+    assert "someone should" not in result.value.lower()
+    assert "we are staying with" not in result.value.lower()
+
+
+def test_caregiver_reply_fallback_does_not_claim_a_call_was_made(monkeypatch):
+    monkeypatch.setattr(llm, "is_enabled", lambda: False)
+    result = llm.caregiver_reply(
+        "Rosa", 2, "caregiver concern", "https://carepath.test/c/sen_rosa",
+        "Someone should make that call.",
+    )
+    assert result.used_model is False
+    assert "Reply CALL to request a nurse call" in result.value
+    assert "No call has been placed yet" in result.value
+
+
 # -- extraction is additive, never subtractive ----------------------------
 def test_the_model_cannot_delete_a_lexicon_symptom(with_key, monkeypatch):
     """A model that returns nothing must not erase a red flag the lexicon saw."""

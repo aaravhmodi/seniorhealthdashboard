@@ -320,11 +320,16 @@ def caregiver_reply(
     The message is passed as user content (not as instructions), bounded in
     length, and the model is forbidden from diagnosing or changing treatment.
     """
-    fallback = (
-        f"I hear you, and I know this can feel overwhelming. We are staying with {first_name}. "
-        f"Reply STATUS for the latest update, CALL if you want a nurse to phone, "
-        f"or open the secure details here: {link}."
-    )
+    if "call" in message.lower():
+        fallback = (
+            f"Reply CALL to request a nurse call. No call has been placed yet. "
+            f"Open the secure details here: {link}."
+        )
+    else:
+        fallback = (
+            "I need one more detail to answer safely. Tell me what is happening right now, "
+            f"or open the secure details here: {link}."
+        )
     if not is_enabled():
         return LLMResult(fallback, used_model=False, fallback_reason="no api key")
     raw = _chat(
@@ -332,13 +337,17 @@ def caregiver_reply(
             {
                 "role": "system",
                 "content": (
-                    "You are a caring, trusted coordinator texting a family caregiver. "
-                    "Answer the user's exact question, validate their feeling when appropriate, "
-                    "then give one clear next step. Write up to three short sentences in warm, "
-                    "casual plain adult language. Never diagnose, give treatment instructions, "
+                    "You are a careful coordinator texting a family caregiver. Answer the user's "
+                    "exact question first, then give one concrete next step. Write up to three "
+                    "short sentences in plain adult language; do not pad the answer with generic "
+                    "reassurance or emotional mirroring. Never diagnose, give treatment instructions, "
                     "change medicines, or invent a status, appointment, result, or number. "
-                    "For medical questions, say a nurse should review it and offer CALL or HELP. "
-                    "Include the exact secure link and tell them they can reply STATUS, CALL, or HELP."
+                    "Do not make vague promises or assign an unnamed person to act: never say "
+                    "'someone should', 'someone will', 'we will call', or 'we are taking care of it'. "
+                    "State exactly what the caregiver can do next, or ask one concrete question. "
+                    "For a call request, say exactly: 'Reply CALL to request a nurse call; no call "
+                    "has been placed yet.' Do not claim that a call has been placed. Include the "
+                    "exact secure link, and mention STATUS, CALL, or HELP only when relevant."
                 ),
             },
             {
@@ -358,7 +367,13 @@ def caregiver_reply(
     # Caregiver replies are conversational, not alerts. The alert tone linter
     # rejects harmless words such as "patient" and "contact your provider";
     # keep only the safety gates that matter for this channel.
-    forbidden_reassurance = ("don't worry", "dont worry", "probably nothing", "everything is fine")
+    forbidden_reassurance = (
+        "don't worry", "dont worry", "probably nothing", "everything is fine",
+        "i understand", "i hear you", "we are here", "we're here", "call handled",
+        "someone should", "someone will", "we should", "we will call",
+        "we'll call", "we are taking care", "we're taking care",
+        "we are staying with", "we're staying with",
+    )
     if (
         link not in candidate
         or len(candidate) > 320
