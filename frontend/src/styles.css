@@ -49,9 +49,10 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 /* Clear hierarchy and generous controls for senior users. */
 .big-button { min-height: 54px; font-size: 1rem; }.intro-copy, .section-copy { color: #5d766b; font-size: 1rem; }.profile-form h2 { font-size: 1.35rem; }.profile-form label { font-size: .95rem; }.profile-modal { width: min(100%, 780px); }.profile-modal h2 { font-size: 2.5rem; }.profile-list { margin: 0; padding-left: 1.3rem; display: grid; gap: .55rem; color: #365d4e; }.compact-item { line-height: 1.55; color: #365d4e; }.menu-wrap { position: relative; }.menu { position: absolute; top: calc(100% + .65rem); right: 0; z-index: 6; min-width: 180px; background: #fff; border: 1px solid #d8e4dc; border-radius: 10px; padding: .35rem; box-shadow: 0 8px 24px #17362a24; }.menu button { width: 100%; background: transparent; color: #315c4d; display: flex; gap: .55rem; align-items: center; text-align: left; padding: .78rem; border-radius: 7px; font-size: .95rem; }.menu button:hover { background: #eef6f1; }.menu .sign-out { color: #9e4943; border-top: 1px solid #e0e8e2; }.page-intro { margin: 0 0 2rem; }.page-intro h1 { font-size: 2.8rem; margin-bottom: .4rem; }.page-intro p { color: #617a6f; font-size: 1.05rem; }.care-plan-grid { grid-template-columns: 1fr; max-width: 760px; }.care-plan-card { grid-template-columns: auto 1fr; }.care-plan-card ul { margin: .55rem 0 0; padding-left: 1.25rem; }.history-record { display: flex; gap: 1rem; padding: 1.15rem; }.history-record p { color: #60786d; margin: .35rem 0 0; }.guidance-card { grid-template-columns: 1fr; }.guidance-card ul { margin: .8rem 0; padding-left: 1.2rem; display: grid; gap: .45rem; }.topbar nav button { font-size: .95rem; }.login-language { margin-bottom: 1.5rem; }.login-language label { display: flex; align-items: center; gap: .45rem; }.login-language .form-select { font-size: 1rem; }
 .language-alert { max-width: 1020px; margin: 1rem auto 0; padding: .85rem 1rem; color: #6f4a00; background: #fff4d9; border: 1px solid #efd58f; border-radius: 10px; font-size: 1rem; }
-.followup-question { margin-bottom: 1.25rem; padding: 1rem 1.1rem; border: 1px solid #c8dfd1; border-radius: 11px; background: #eff8f1; }
-.followup-question h3 { margin: .2rem 0 .35rem; font-size: 1.15rem; line-height: 1.4; color: #214f3c; }
-.followup-question .eyebrow { margin: 0; color: #287156; font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.followup-question { margin-bottom: 1.25rem; padding: 1.25rem 1.35rem; border: 1px solid #c8dfd1; border-radius: 13px; background: #eff8f1; }
+.followup-question h3 { margin: .25rem 0 .55rem; font-size: clamp(1.3rem, 2.5vw, 1.6rem); line-height: 1.45; color: #214f3c; }
+.followup-question .helper-text { margin: 0; font-size: 1rem; line-height: 1.55; color: #45685a; }
+.followup-question .eyebrow { margin: 0; color: #287156; font-size: .84rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .conversation-card { margin-top: 1rem; background: #fff; border: 1px solid #e2e9e2; border-radius: 14px; padding: 1.25rem 1.5rem; }
 .conversation-card h2 { margin: 0; font-size: 1.2rem; }
 .conversation-turns { display: grid; gap: .65rem; margin-top: .8rem; }
@@ -182,14 +183,14 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 /* -- What this could be: concerns, percentages, and the working ----------- */
 /* Band tones are shared by the strip, the headline and every concern card,
    so a colour always means the same action wherever it appears. */
-.risk-panel { margin-top: 1.65rem; border: 1px solid #dce8df; border-radius: 18px; background: #fff; padding: clamp(1.2rem, 3vw, 1.8rem); }
-.risk-panel-empty { padding: 1.4rem 1.5rem; }
-.risk-panel-empty h2 { font-size: 1.2rem; margin: .2rem 0 .45rem; color: #18352d; }
+.risk-panel { margin-top: 1.65rem; border: 1px solid #dce8df; border-radius: 18px; background: #fff; padding: clamp(1.35rem, 3vw, 2rem); }
+.risk-panel-empty { padding: 1.5rem 1.6rem; }
+.risk-panel-empty h2 { font-size: 1.4rem; line-height: 1.35; margin: .25rem 0 .55rem; color: #18352d; }
 .risk-heading { display: flex; gap: 1.2rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .risk-heading > div:first-child { flex: 1 1 320px; }
-.risk-heading h2 { font-size: 1.5rem; line-height: 1.25; margin: .2rem 0 .55rem; color: #18352d; }
+.risk-heading h2 { font-size: clamp(1.65rem, 3vw, 2rem); line-height: 1.25; margin: .2rem 0 .65rem; color: #18352d; }
 .risk-others { color: #5c7a6d; font-weight: 500; }
-.risk-sub { max-width: 620px; color: #55705f; font-size: .87rem; line-height: 1.55; margin: 0; }
+.risk-sub { max-width: 620px; color: #45685a; font-size: 1rem; line-height: 1.6; margin: 0; }
 .risk-headline { flex: 0 0 auto; text-align: center; border-radius: 14px; padding: .8rem 1.1rem; min-width: 118px; }
 .risk-headline strong { display: block; font-size: 2.7rem; line-height: 1; letter-spacing: -.06em; }
 .risk-headline strong small { font-size: 1.1rem; letter-spacing: 0; }
@@ -221,8 +222,8 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .concern-card.urgent { border-left-color: #d1743f; }
 .concern-card.critical { border-left-color: #c84d48; }
 .concern-top { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; }
-.concern-name h4 { font-size: 1.08rem; margin: 0 0 .3rem; color: #18352d; }
-.concern-name p { margin: 0; font-size: .84rem; line-height: 1.5; color: #56705f; max-width: 54ch; }
+.concern-name h4 { font-size: 1.2rem; line-height: 1.35; margin: 0 0 .35rem; color: #18352d; }
+.concern-name p { margin: 0; font-size: .98rem; line-height: 1.55; color: #4c6a5c; max-width: 54ch; }
 .concern-figure { text-align: right; white-space: nowrap; }
 .concern-figure strong { display: block; font-size: 1.9rem; line-height: 1; letter-spacing: -.05em; color: #18352d; }
 .concern-figure strong small { font-size: .9rem; letter-spacing: 0; color: #5c7a6d; }
@@ -233,10 +234,10 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .concern-meter-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #56a081, #d89b2c 45%, #c84d48); }
 .concern-meter-base { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #7d9186; transform: translateX(-50%); }
 .concern-scale-note { font-size: .74rem; color: #7d9186; margin: 0 0 .7rem; }
-.concern-action { font-size: .9rem; line-height: 1.5; color: #2c5546; margin: 0 0 .6rem; }
+.concern-action { font-size: 1rem; line-height: 1.55; color: #2c5546; margin: 0 0 .7rem; }
 .concern-action strong { color: #18352d; }
 
-.concern-toggle { display: inline-flex; align-items: center; gap: .35rem; background: none; border: 0; padding: 0; font: inherit; font-size: .8rem; font-weight: 700; color: #2b6c53; cursor: pointer; }
+.concern-toggle { display: inline-flex; align-items: center; gap: .35rem; background: none; border: 0; padding: 0; font: inherit; font-size: .92rem; font-weight: 700; color: #2b6c53; cursor: pointer; }
 .concern-toggle:hover { text-decoration: underline; }
 .concern-toggle svg { transition: transform .15s ease; }
 .concern-toggle svg.rotated { transform: rotate(180deg); }

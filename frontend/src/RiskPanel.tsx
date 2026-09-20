@@ -118,7 +118,9 @@ export function RiskPanel({ risk, audience = "patient" }: {
 }) {
   const { i18n } = useTranslation();
   const copy = getRiskCopy(supportedLanguage(i18n.language));
-  const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
+  // Lead with the plain-language answer. Technical evidence stays available
+  // behind the button instead of opening all the details at once.
+  const [openCode, setOpenCode] = useState<string | null>(null);
   const [showModel, setShowModel] = useState(false);
   const [showSources, setShowSources] = useState(false);
   if (!risk.concerns.length) {
