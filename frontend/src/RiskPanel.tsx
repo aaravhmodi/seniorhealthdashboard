@@ -53,7 +53,7 @@ function ConcernCard({ concern, open, onToggle, audience, copy }: {
       <div className="concern-top">
         <div className="concern-name">
           <h4>{copy.concernLabels[concern.code] || concern.label}</h4>
-          <p>{concern.plain}</p>
+          <p>{copy.concernPlain[concern.code] || concern.plain}</p>
         </div>
         <div className="concern-figure">
           <strong>{concern.probability_percent.toFixed(0)}<small>%</small></strong>
