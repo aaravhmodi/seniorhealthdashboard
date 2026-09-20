@@ -15,7 +15,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -982,8 +982,6 @@ function Dashboard({
   const [reminderKind, setReminderKind] = useState<"meds" | "appointment" | "refill" | "caregiver_update">("meds");
   const [reminderMedicationId, setReminderMedicationId] = useState("");
   const [reminderRecipient, setReminderRecipient] = useState<"self" | "caregiver" | "both">("self");
-  const [reminderAt, setReminderAt] = useState("");
-  const [scheduledReminders, setScheduledReminders] = useState<ReminderJob[]>([]);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState("");
   const [sharingConversation, setSharingConversation] = useState(false);
@@ -1016,7 +1014,6 @@ function Dashboard({
         await api.createSenior(senior);
         profileRegistered.current = true;
         setCheckins(await api.checkins(senior.id));
-        setScheduledReminders(await api.reminders(senior.id));
       } catch {
         // The dashboard remains available while the local API is offline.
       }
@@ -1396,20 +1393,8 @@ function Dashboard({
               <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || (reminderKind === "meds" && !senior.medications.length)}>
                 {sendingReminder ? "Sending..." : t("sendText")}
               </button>
-              <label className="sr-only" htmlFor="reminder-at">Reminder date and time</label>
-              <input id="reminder-at" type="datetime-local" value={reminderAt} min={new Date(Date.now() + 60000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)} onChange={(event) => setReminderAt(event.target.value)} />
-              <button className="primary-button" type="button" onClick={() => void scheduleReminder()} disabled={sendingReminder || !reminderAt || (reminderKind === "meds" && !senior.medications.length)}>
-                {sendingReminder ? "Scheduling..." : "Schedule"}
-              </button>
             </div>
             {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
-            {scheduledReminders.length > 0 && <div className="scheduled-reminders">
-              <h3>Scheduled reminders</h3>
-              {scheduledReminders.map((job) => <div className="scheduled-reminder" key={job.id}>
-                <span><strong>{job.kind === "meds" ? "Medication" : job.kind === "appointment" ? "Appointment" : "Refill"}</strong> · {new Date(job.scheduled_for).toLocaleString()} · {job.recipient}</span>
-                {job.status === "scheduled" ? <button className="text-button" type="button" onClick={() => void cancelScheduledReminder(job.id)}>Cancel</button> : <small>{job.status}</small>}
-              </div>)}
-            </div>}
           </section>
         </main>
       )}
