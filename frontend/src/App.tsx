@@ -15,7 +15,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -982,6 +982,8 @@ function Dashboard({
   const [reminderKind, setReminderKind] = useState<"meds" | "appointment" | "refill" | "caregiver_update">("meds");
   const [reminderMedicationId, setReminderMedicationId] = useState("");
   const [reminderRecipient, setReminderRecipient] = useState<"self" | "caregiver" | "both">("self");
+  const [reminderAt, setReminderAt] = useState("");
+  const [scheduledReminders, setScheduledReminders] = useState<ReminderJob[]>([]);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState("");
   const [sharingConversation, setSharingConversation] = useState(false);
@@ -1014,6 +1016,7 @@ function Dashboard({
         await api.createSenior(senior);
         profileRegistered.current = true;
         setCheckins(await api.checkins(senior.id));
+        setScheduledReminders(await api.reminders(senior.id));
       } catch {
         // The dashboard remains available while the local API is offline.
       }
@@ -1292,12 +1295,12 @@ function Dashboard({
           <section className="checkin-card">
             {followUpKey && (
               <div className="followup-question" role="status">
-                <p className="eyebrow">One more question</p>
+                <p className="eyebrow">{t("oneMoreQuestion")}</p>
                 <h3>{followUpText(followUpKey, i18n.language)}</h3>
-                <p className="helper-text">Your answer helps us choose the safest next step.</p>
+                <p className="helper-text">{t("answerHelps")}</p>
               </div>
             )}
-            <h2>{followUpKey ? "Your answer" : t("tell")}</h2>
+            <h2>{followUpKey ? t("yourAnswer") : t("tell")}</h2>
             <textarea
               value={message}
               onChange={(event) => updateMessage(event.target.value)}
@@ -1313,7 +1316,7 @@ function Dashboard({
                 disabled={!message.trim() || saving}
                 onClick={() => void addCheckin()}
               >
-                {saving ? "Saving…" : t("check")} <ArrowRight size={20} />
+                {saving ? t("saving") : t("check")} <ArrowRight size={20} />
               </button>
             </div>
             {listening && <p className="live-transcript" role="status">{t("listening")}</p>}
@@ -1333,11 +1336,11 @@ function Dashboard({
                 setSpeaking(true);
                 if (!speakText(evaluation.explanation, i18n.language)) setError("Read-aloud is not available in this browser.");
                 window.setTimeout(() => setSpeaking(false), Math.max(1200, evaluation.explanation.length * 45));
-              }}>{speaking ? "Speaking…" : "🔊 Read guidance aloud"}</button>
+              }}>{speaking ? t("speaking") : `🔊 ${t("readGuidance")}`}</button>
               <button className="secondary-button" type="button" onClick={() => void shareConversation()} disabled={sharingConversation || !checkins[0]}>
-                {sharingConversation ? "Sending..." : "Send to my caregiver"}
+                {sharingConversation ? t("sending") : t("sendToCaregiver")}
               </button>
-              {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? "Preparing handoff..." : "Download nurse handoff PDF"}</button>}
+              {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? t("preparingHandoff") : t("downloadHandoff")}</button>}
               {shareStatus && <p className="form-success" role="status">{shareStatus}</p>}
             </div>
           </section>}
@@ -1350,14 +1353,14 @@ function Dashboard({
           <WellnessOverview checkins={checkins} evaluation={evaluation} />
           <div className="page-title-row">
             <h2>{t("plan")}</h2>
-            <button className="secondary-button compact-button" type="button" onClick={() => setEditingPlan((editing) => !editing)}>{editingPlan ? "Done editing" : "Edit care plan"}</button>
+            <button className="secondary-button compact-button" type="button" onClick={() => setEditingPlan((editing) => !editing)}>{editingPlan ? t("doneEditing") : t("editCarePlan")}</button>
           </div>
           {editingPlan && <section className="checkin-card care-plan-editor">
-            <label>Daily habits or diet</label><textarea value={routineDraft} onChange={(event) => setRoutineDraft(event.target.value)} />
-            <label>Care instructions</label><textarea value={instructionDraft} onChange={(event) => setInstructionDraft(event.target.value)} />
-            <h2>Add an appointment</h2>
+            <label>{t("dailyHabits")}</label><textarea value={routineDraft} onChange={(event) => setRoutineDraft(event.target.value)} />
+            <label>{t("instructions")}</label><textarea value={instructionDraft} onChange={(event) => setInstructionDraft(event.target.value)} />
+            <h2>{t("addAppointment")}</h2>
             <div className="form-grid"><div><label htmlFor="appointment-title">{t("appointment")}</label><input id="appointment-title" value={appointmentDraft.title} onChange={(event) => setAppointmentDraft((current) => ({ ...current, title: event.target.value }))} /></div><div><label htmlFor="appointment-date">{t("dateTime")}</label><input id="appointment-date" type="datetime-local" value={appointmentDraft.date} onChange={(event) => setAppointmentDraft((current) => ({ ...current, date: event.target.value }))} /></div><div className="full"><label htmlFor="appointment-location">{t("location")}</label><input id="appointment-location" value={appointmentDraft.location} onChange={(event) => setAppointmentDraft((current) => ({ ...current, location: event.target.value }))} /></div></div>
-            <button className="primary-button" type="button" onClick={() => { plan.routines = splitList(routineDraft); plan.instructions = splitList(instructionDraft); if (appointmentDraft.title.trim()) plan.appointments = [...plan.appointments, { id: crypto.randomUUID(), title: appointmentDraft.title.trim(), date: appointmentDraft.date, location: appointmentDraft.location.trim() }]; localStorage.setItem(`carepath-plan:${senior.id}`, JSON.stringify(plan)); setAppointmentDraft({ title: "", date: "", location: "" }); setEditingPlan(false); }}>Save care plan</button>
+            <button className="primary-button" type="button" onClick={() => { plan.routines = splitList(routineDraft); plan.instructions = splitList(instructionDraft); if (appointmentDraft.title.trim()) plan.appointments = [...plan.appointments, { id: crypto.randomUUID(), title: appointmentDraft.title.trim(), date: appointmentDraft.date, location: appointmentDraft.location.trim() }]; localStorage.setItem(`carepath-plan:${senior.id}`, JSON.stringify(plan)); setAppointmentDraft({ title: "", date: "", location: "" }); setEditingPlan(false); }}>{t("saveCarePlan")}</button>
           </section>}
           <PlanSection title={t("dailyRoutine")} values={plan.routines} />
           <PlanSection title={t("instructions")} values={plan.instructions} />
@@ -1374,15 +1377,15 @@ function Dashboard({
               <p className="helper-text">{t("reminderDescription")}</p>
             </div>
             <div className="reminder-actions">
-              <label className="sr-only" htmlFor="reminder-kind">Reminder type</label>
+              <label className="sr-only" htmlFor="reminder-kind">{t("reminderType")}</label>
               <select id="reminder-kind" value={reminderKind} onChange={(event) => setReminderKind(event.target.value as typeof reminderKind)}>
-                <option value="meds">Medication</option>
-                <option value="appointment">Appointment</option>
-                <option value="refill">Refill</option>
+                <option value="meds">{t("medication")}</option>
+                <option value="appointment">{t("appointment")}</option>
+                <option value="refill">{t("refill")}</option>
               </select>
               <label className="sr-only" htmlFor="reminder-medication">{t("medications")}</label>
               <select id="reminder-medication" value={reminderMedicationId || senior.medications[0]?.id || ""} onChange={(event) => setReminderMedicationId(event.target.value)} disabled={!senior.medications.length || reminderKind !== "meds"}>
-                {senior.medications.length ? senior.medications.map((medication) => <option key={medication.id} value={medication.id}>{medication.name}</option>) : <option value="">Add a medication in your profile</option>}
+                {senior.medications.length ? senior.medications.map((medication) => <option key={medication.id} value={medication.id}>{medication.name}</option>) : <option value="">{t("addMedicationFirst")}</option>}
               </select>
               <label className="sr-only" htmlFor="reminder-recipient">{t("reminderRecipient")}</label>
               <select id="reminder-recipient" value={reminderRecipient} onChange={(event) => setReminderRecipient(event.target.value as "self" | "caregiver" | "both")}>
@@ -1391,19 +1394,31 @@ function Dashboard({
                 <option value="both" disabled={!senior.caregivers?.[0]}>{t("meAndCaregiver")}</option>
               </select>
               <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || (reminderKind === "meds" && !senior.medications.length)}>
-                {sendingReminder ? "Sending..." : t("sendText")}
+                {sendingReminder ? t("sending") : t("sendText")}
+              </button>
+              <label className="sr-only" htmlFor="reminder-at">Reminder date and time</label>
+              <input id="reminder-at" type="datetime-local" value={reminderAt} min={new Date(Date.now() + 60000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)} onChange={(event) => setReminderAt(event.target.value)} />
+              <button className="primary-button" type="button" onClick={() => void scheduleReminder()} disabled={sendingReminder || !reminderAt || (reminderKind === "meds" && !senior.medications.length)}>
+                {sendingReminder ? t("scheduling") : t("scheduleReminder")}
               </button>
             </div>
             {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
+            {scheduledReminders.length > 0 && <div className="scheduled-reminders">
+              <h3>{t("scheduledReminders")}</h3>
+              {scheduledReminders.map((job) => <div className="scheduled-reminder" key={job.id}>
+                <span><strong>{job.kind === "meds" ? t("medication") : job.kind === "appointment" ? t("appointment") : t("refill")}</strong> · {new Date(job.scheduled_for).toLocaleString(i18n.language)} · {t(`reminderAudience.${job.recipient}`)}</span>
+                {job.status === "scheduled" ? <button className="text-button" type="button" onClick={() => void cancelScheduledReminder(job.id)}>{t("cancel")}</button> : <small>{t(`reminderStatus.${job.status}`, { defaultValue: job.status })}</small>}
+              </div>)}
+            </div>}
           </section>
         </main>
       )}
       {page === "history" && (
         <main className="dashboard">
           <div className="page-title-row page-heading"><h1>{t("history")}</h1></div>
-          <section className="symptom-trends" aria-label="Recurring symptoms">
-            <h2>Recurring symptoms</h2>
-            {Object.keys(symptomCounts).length ? Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{label}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>) : <p className="muted">Your recurring symptoms will appear here after you record them.</p>}
+          <section className="symptom-trends" aria-label={t("recurringSymptoms")}>
+            <h2>{t("recurringSymptoms")}</h2>
+            {Object.keys(symptomCounts).length ? Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{t(`symptom.${label}`, { defaultValue: label })}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>) : <p className="muted">{t("recurringSymptomsEmpty")}</p>}
           </section>
           {historyCheckins.map((checkin) => (
             <article className="history-record" key={checkin.id}>
