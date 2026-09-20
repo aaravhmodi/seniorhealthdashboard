@@ -73,20 +73,42 @@ def test_status_endpoint_reports_an_empty_warehouse(warehouse_at, client):
 
 
 # -- NHAMCS ----------------------------------------------------------------
-def write_nhamcs(tmp_path, rows):
-    path = tmp_path / "nhamcs2022.csv"
+# Real NHAMCS reason-for-visit codes, taken from the survey's own value labels.
+# The four-digit codes this file used to carry matched nothing in the data.
+CHEST_PAIN = "10501"
+DIZZINESS = "12250"
+
+
+def write_nhamcs(tmp_path, rows, name="nhamcs2022.csv"):
+    """The 2011-onward schema: disposition as independent yes/no flags.
+
+    `rows` are (age, sex, rfv, admitted, weight) with `admitted` a bool.
+    """
+    path = tmp_path / name
+    lines = ["AGE,SEX,RFV1,ADMITHOS,OBSHOS,TRANPSYC,TRANNH,TRANOTH,DIEDED,PATWT,VYEAR"]
+    lines += [
+        f"{a},{s},{r},{int(bool(adm))},0,0,0,0,0,{w},2022"
+        for a, s, r, adm, w in rows
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return str(path)
+
+
+def write_nhamcs_legacy(tmp_path, rows, name="nhamcs2009.csv"):
+    """The pre-2011 schema: one coded disposition column."""
+    path = tmp_path / name
     lines = ["AGE,SEX,RFV1,ADISP,PATWT,VYEAR"]
-    lines += [f"{a},{s},{r},{d},{w},2022" for a, s, r, d, w in rows]
+    lines += [f"{a},{s},{r},{4 if adm else 1},{w},2009" for a, s, r, adm, w in rows]
     path.write_text("\n".join(lines), encoding="utf-8")
     return str(path)
 
 
 def test_nhamcs_builds_weighted_rates_with_intervals(warehouse_at, tmp_path):
-    # 40 chest-pain visits in 75-84: 30 admitted (code 4), 10 sent home (1).
-    rows = [(78, 1, "1050", 4, 1000) for _ in range(30)]
-    rows += [(78, 1, "1050", 1, 1000) for _ in range(10)]
+    # 40 chest-pain visits in 75-84: 30 admitted, 10 sent home.
+    rows = [(78, 1, CHEST_PAIN, True, 1000) for _ in range(30)]
+    rows += [(78, 1, CHEST_PAIN, False, 1000) for _ in range(10)]
     # A thin cell that must be dropped by min_n.
-    rows += [(80, 2, "1245", 4, 1000) for _ in range(5)]
+    rows += [(80, 2, DIZZINESS, True, 1000) for _ in range(5)]
 
     cells = nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=30)
     assert cells == 1, "the 5-visit cell is too thin to quote"
@@ -101,16 +123,68 @@ def test_nhamcs_builds_weighted_rates_with_intervals(warehouse_at, tmp_path):
     assert not result["source"].startswith("MOCK")
 
 
+def test_nhamcs_reads_the_pre_2011_coded_disposition(warehouse_at, tmp_path):
+    """The flag columns only exist from 2011. Older years must still load."""
+    rows = [(78, 1, CHEST_PAIN, True, 1000) for _ in range(30)]
+    rows += [(78, 1, CHEST_PAIN, False, 1000) for _ in range(10)]
+    nhamcs.load([write_nhamcs_legacy(tmp_path, rows)], min_n=30)
+
+    result = lookup.admission_rate("chest pain", 78)
+    assert result["rate_percent"] == pytest.approx(75.0, abs=0.1)
+
+
+def test_nhamcs_ignores_adisp_when_the_flags_are_present(warehouse_at, tmp_path):
+    """ADISP is only asked OF admitted patients, so reading it as the ED
+    outcome scores most visits "not applicable" and reports a near-zero admit
+    rate. When the flags exist they win, whatever ADISP says."""
+    path = tmp_path / "both.csv"
+    header = "AGE,SEX,RFV1,ADMITHOS,OBSHOS,TRANPSYC,TRANNH,TRANOTH,DIEDED,ADISP,PATWT,VYEAR"
+    lines = [header]
+    lines += [f"70,1,{CHEST_PAIN},1,0,0,0,0,0,-7,1000,2022" for _ in range(30)]
+    lines += [f"70,1,{CHEST_PAIN},0,0,0,0,0,0,-7,1000,2022" for _ in range(10)]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    nhamcs.load([str(path)], min_n=30)
+    result = lookup.admission_rate("chest pain", 70)
+    assert result["rate_percent"] == pytest.approx(75.0, abs=0.1)
+
+
+def test_nhamcs_groups_a_symptom_before_thresholding(warehouse_at, tmp_path):
+    """A symptom maps onto several reason-for-visit codes. Thresholding each
+    code alone throws the symptom away in pieces -- which is exactly how
+    confusion ended up with no base rate at all."""
+    codes = nhamcs.SYMPTOM_TO_RFV["confusion"]
+    assert len(codes) > 1
+    rows = [(78, 1, code, True, 1000) for code in codes for _ in range(12)]
+
+    assert nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=30) == 1
+    result = lookup.admission_rate("confusion", 78)
+    assert result["n"] == 12 * len(codes)
+
+
+def test_nhamcs_reports_the_years_it_used(warehouse_at, tmp_path):
+    rows = [(78, 1, CHEST_PAIN, True, 1000) for _ in range(30)]
+    nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=30)
+    result = lookup.admission_rate("chest pain", 78)
+    assert "2022" in result["source"], "a rate without a date is a rumour"
+
+
+def test_nhamcs_has_no_fall_code(warehouse_at):
+    """NHAMCS codes a fall as a cause of injury, not a reason for visit, so
+    there is nothing here to quote. Falls belong to NEISS."""
+    assert "fall" not in nhamcs.SYMPTOM_TO_RFV
+
+
 def test_nhamcs_excludes_under_65s(warehouse_at, tmp_path):
-    rows = [(40, 1, "1050", 4, 1000) for _ in range(50)]
+    rows = [(40, 1, CHEST_PAIN, True, 1000) for _ in range(50)]
     assert nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=1) == 0
 
 
 def test_nhamcs_respects_the_survey_weight(warehouse_at, tmp_path):
     """Unweighted this is 50%; weighted it is not. Getting this wrong would
     quietly misstate every base rate in the demo."""
-    rows = [(70, 1, "1050", 4, 9000) for _ in range(20)]   # admitted, heavy
-    rows += [(70, 1, "1050", 1, 1000) for _ in range(20)]  # home, light
+    rows = [(70, 1, CHEST_PAIN, True, 9000) for _ in range(20)]   # admitted, heavy
+    rows += [(70, 1, CHEST_PAIN, False, 1000) for _ in range(20)]  # home, light
     nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=10)
 
     result = lookup.admission_rate("chest pain", 70)
@@ -124,9 +198,18 @@ def test_a_missing_column_fails_loudly(warehouse_at, tmp_path):
         nhamcs.load([str(bad)])
 
 
+def test_no_disposition_at_all_fails_loudly(warehouse_at, tmp_path):
+    """A file with the required fields but no way to tell who went home must
+    not quietly build a table of zero-percent admission rates."""
+    bad = tmp_path / "nodispo.csv"
+    bad.write_text(f"AGE,SEX,RFV1,PATWT\n70,1,{CHEST_PAIN},1000\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="disposition"):
+        nhamcs.load([str(bad)])
+
+
 def test_real_nhamcs_rates_replace_the_mock_card(warehouse_at, tmp_path, client):
-    rows = [(78, 1, "1050", 4, 1000) for _ in range(30)]
-    rows += [(78, 1, "1050", 1, 1000) for _ in range(10)]
+    rows = [(78, 1, CHEST_PAIN, True, 1000) for _ in range(30)]
+    rows += [(78, 1, CHEST_PAIN, False, 1000) for _ in range(10)]
     nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=30)
 
     senior = store.get_senior("sen_rosa")
@@ -439,7 +522,7 @@ def test_faers_accepts_the_official_ascii_subdirectory(warehouse_at, tmp_path):
 
 # -- status ----------------------------------------------------------------
 def test_status_lists_what_was_loaded(warehouse_at, tmp_path, client):
-    rows = [(78, 1, "1050", 4, 1000) for _ in range(40)]
+    rows = [(78, 1, CHEST_PAIN, True, 1000) for _ in range(40)]
     nhamcs.load([write_nhamcs(tmp_path, rows)], min_n=10)
 
     body = client.get("/datasets/status").json()

@@ -61,33 +61,39 @@ def _query(sql: str, params: list[Any]) -> list[tuple]:
 
 @lru_cache(maxsize=512)
 def admission_rate(symptom_label: str, age: int) -> dict | None:
-    """NHAMCS: share of similar ED visits that ended in admission or transfer."""
-    codes = nhamcs.SYMPTOM_TO_RFV.get(symptom_label)
-    if not codes:
+    """NHAMCS: share of similar ED visits that ended in admission or transfer.
+
+    One row per symptom and age band. The loader already did the aggregation
+    across the symptom's reason-for-visit codes, survey-weighted, with a single
+    interval -- so this is a lookup, not an average of averages.
+    """
+    if symptom_label not in nhamcs.SYMPTOM_TO_RFV:
         return None
     band = nhamcs.age_band(age)
-    placeholders = ", ".join("?" for _ in codes)
     rows = _query(
-        f"""
-        SELECT sum(n)                                   AS n,
-               sum(rate * n) / nullif(sum(n), 0)        AS rate,
-               min(ci_low)                              AS ci_low,
-               max(ci_high)                             AS ci_high
+        """
+        SELECT n, rate, ci_low, ci_high, year_min, year_max
         FROM nhamcs_senior_rates
-        WHERE reason_code IN ({placeholders}) AND age_band = ?
+        WHERE symptom = ? AND age_band = ?
         """,
-        [*codes, band],
+        [symptom_label, band],
     )
     if not rows or not rows[0][0]:
         return None
-    n, rate, ci_low, ci_high = rows[0]
+    n, rate, ci_low, ci_high, year_min, year_max = rows[0]
+    years = (
+        f"{year_min}" if year_min == year_max else f"{year_min}-{year_max}"
+    ) if year_min else "public-use files"
     return {
         "n": int(n),
         "rate_percent": round(float(rate) * 100, 1),
         "ci_low": round(float(ci_low) * 100, 1),
         "ci_high": round(float(ci_high) * 100, 1),
         "age_band": band,
-        "source": f"NHAMCS ED public-use files, ages {band}, survey-weighted",
+        "years": years,
+        "source": (
+            f"NHAMCS ED {years}, ages {band}, survey-weighted to national estimates"
+        ),
     }
 
 

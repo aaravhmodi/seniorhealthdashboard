@@ -21,8 +21,30 @@ patients, not for evidence.
 mkdir -p backend/data/raw/{nhamcs,neiss,faers}
 ```
 
-- **NHAMCS** — <https://www.cdc.gov/nchs/ahcd/datasets_documentation_related.htm>
-  Download the **ED** public-use files (not outpatient). Pool several years.
+- **NHAMCS** — the **ED** public-use files (not outpatient). Pool several years.
+  CDC ships fixed-width ASCII with the record layout only in a documentation
+  PDF, so the quickest route is NBER's CSV conversion, which is the same data:
+
+  ```bash
+  cd backend/data/raw/nhamcs
+  for y in 2011 2012 2013 2014 2015; do
+    curl -O "https://data.nber.org/nhamcs/data/nhamcsed$y.csv"
+  done
+  ```
+
+  NBER stops at 2015; 2016-2022 are at
+  <https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHAMCS/> as zipped
+  fixed-width, and need the layout from that year's `doc*-ed*.pdf` before they
+  can be converted. The loader reads whatever columns it finds, so a mix of
+  years is fine.
+
+  Two things about this file that bite if you do not know them. The disposition
+  moved in the 2011 redesign from one coded column to a set of yes/no flags
+  (`ADMITHOS`, `OBSHOS`, `TRAN*`, `DIEDED`); `ADISP` still exists but is only
+  asked *of admitted patients*, so reading it as the ED outcome scores ~92% of
+  visits "not applicable". And reason-for-visit is a five-digit classification
+  — `scripts/rfv_codes.py` prints the codes out of the survey's own value
+  labels so `SYMPTOM_TO_RFV` is quoted rather than guessed.
 - **NEISS** — <https://www.cpsc.gov/Research--Statistics/NEISS-Injury-Data>
   Any recent years. The narrative column is what makes the anticoagulant split
   possible, so keep it.
