@@ -1,0 +1,8 @@
+backend/data/
+backend/.venv/
+backend/.pytest_tmp/
+.claude/
+.postman/
+postman/
+frontend/node_modules/
+frontend/dist/
