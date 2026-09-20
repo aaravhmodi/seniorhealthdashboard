@@ -986,6 +986,8 @@ function Dashboard({
   const [scheduledReminders, setScheduledReminders] = useState<ReminderJob[]>([]);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState("");
+  const [sharingConversation, setSharingConversation] = useState(false);
+  const [shareStatus, setShareStatus] = useState("");
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
   const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
   const [handoffDetails, setHandoffDetails] = useState<Record<string, HandoffPacket>>({});
@@ -1050,6 +1052,7 @@ function Dashboard({
     if (!text.trim() || saving) return;
     setSaving(true);
     setError("");
+    setShareStatus("");
     const askedKey = followUpKey;
     try {
       if (!profileRegistered.current) {
@@ -1134,6 +1137,20 @@ function Dashboard({
       setReminderStatus(reason instanceof Error ? reason.message : "Message was not sent.");
     } finally {
       setSendingReminder(false);
+    }
+  };
+  const shareConversation = async () => {
+    const latestCheckin = checkins[0];
+    if (!latestCheckin || sharingConversation) return;
+    setSharingConversation(true);
+    setShareStatus("");
+    try {
+      const receipt = await api.shareCheckinWithCaregiver(latestCheckin.id);
+      setShareStatus(receipt.status === "mocked" ? "Demo update queued for your caregiver." : receipt.status === "sent" ? "Update sent to your caregiver." : "The caregiver update could not be sent.");
+    } catch (reason) {
+      setShareStatus(reason instanceof Error ? reason.message : "The caregiver update could not be sent.");
+    } finally {
+      setSharingConversation(false);
     }
   };
   const scheduleReminder = async () => {
@@ -1320,7 +1337,11 @@ function Dashboard({
                 if (!speakText(evaluation.explanation, i18n.language)) setError("Read-aloud is not available in this browser.");
                 window.setTimeout(() => setSpeaking(false), Math.max(1200, evaluation.explanation.length * 45));
               }}>{speaking ? "Speaking…" : "🔊 Read guidance aloud"}</button>
+              <button className="secondary-button" type="button" onClick={() => void shareConversation()} disabled={sharingConversation || !checkins[0]}>
+                {sharingConversation ? "Sending..." : "Send to my caregiver"}
+              </button>
               {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? "Preparing handoff..." : "Download nurse handoff PDF"}</button>}
+              {shareStatus && <p className="form-success" role="status">{shareStatus}</p>}
             </div>
           </section>}
           {evaluation?.risk && <RiskPanel risk={evaluation.risk} />}

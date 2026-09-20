@@ -36,7 +36,7 @@ import unicodedata
 from datetime import timedelta
 from typing import Iterable, Optional
 
-from . import caretone, circle, linq, persistence
+from . import caretone, circle, linq, persistence, reminders
 from .config import get_settings
 from .events import bus
 from .schemas import (
@@ -384,10 +384,12 @@ async def tick() -> dict:
     advance time by calling it directly instead of sleeping.
     """
     sent = [(await send_followup(job)).id for job in claim_due()]
+    reminders_sent = await reminders.tick()
     redelivered = await circle.retry_failed_deliveries()
     escalated = await circle.sweep_escalations()
     return {
         "followups_sent": sent,
+        "reminders_sent": reminders_sent,
         "alerts_redelivered": redelivered,
         "alerts_escalated": escalated,
     }

@@ -1,4 +1,4 @@
-import type { CaregiverView, CheckIn, CheckInResponse, HandoffPacket, ReminderResponse, Senior } from './types'
+import type { CaregiverView, CheckIn, CheckInResponse, HandoffPacket, NotificationReceipt, ReminderJob, ReminderResponse, Senior } from './types'
 import { accessToken } from './supabase'
 
 const base = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
@@ -23,9 +23,15 @@ export const api = {
   caregiverAck: (token: string) => request<{ acknowledged: boolean }>(`/caregiver/${token}/ack`, { method: 'POST' }),
   checkins: (id: string) => request<CheckIn[]>(`/seniors/${id}/checkins`),
   checkin: (id: string, language: string) => request<CheckInResponse>(`/checkins/${id}?language=${encodeURIComponent(language)}`),
+  shareCheckinWithCaregiver: (checkin_id: string) => request<NotificationReceipt>(`/checkins/${checkin_id}/caregiver`, { method: 'POST' }),
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
   handoff: (id: string) => request<HandoffPacket>(`/handoff/${id}`),
   sendReminder: (senior_id: string, kind: string, language: string, recipient: 'self' | 'caregiver' | 'both') =>
     request<ReminderResponse>('/reminders/send', { method: 'POST', body: JSON.stringify({ senior_id, kind, language, recipient }) }),
+  reminders: (senior_id: string) => request<ReminderJob[]>(`/seniors/${senior_id}/reminders`),
+  scheduleReminder: (payload: { senior_id: string; kind: string; language: string; recipient: 'self' | 'caregiver' | 'both'; scheduled_for: string }) =>
+    request<ReminderJob>(`/seniors/${payload.senior_id}/reminders`, { method: 'POST', body: JSON.stringify(payload) }),
+  cancelReminder: (senior_id: string, reminder_id: string) =>
+    request<ReminderJob>(`/seniors/${senior_id}/reminders/${reminder_id}`, { method: 'DELETE' }),
 }

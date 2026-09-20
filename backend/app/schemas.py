@@ -569,8 +569,31 @@ class ReminderResponse(BaseModel):
     recipient: Optional[str] = None
     recipients: list[str] = []
     message_id: Optional[str] = None
+    message_ids: list[str] = []
     body: str
     reply_expected: str = "DONE"
+    error: Optional[str] = None
+
+
+class ReminderScheduleRequest(BaseModel):
+    senior_id: str
+    kind: Literal["meds", "appointment", "refill", "caregiver_update"] = "meds"
+    language: str = "en"
+    recipient: Literal["self", "caregiver", "both"] = "self"
+    scheduled_for: datetime
+
+
+class ReminderJob(BaseModel):
+    id: str
+    senior_id: str
+    kind: Literal["meds", "appointment", "refill", "caregiver_update"] = "meds"
+    language: str = "en"
+    recipient: Literal["self", "caregiver", "both"] = "self"
+    scheduled_for: datetime
+    status: Literal["scheduled", "sending", "sent", "failed", "cancelled"] = "scheduled"
+    created_at: datetime
+    sent_at: Optional[datetime] = None
+    message_ids: list[str] = []
     error: Optional[str] = None
 
 

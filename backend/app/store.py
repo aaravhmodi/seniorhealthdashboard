@@ -32,6 +32,7 @@ from .schemas import (
     Evaluation,
     FollowUpJob,
     HandoffPacket,
+    ReminderJob,
     Senior,
     TeachBackResult,
     TimelineEntry,
@@ -106,6 +107,7 @@ class Store:
         # Local Linq demo reminders. Production can move these rows to the
         # same persistence table without changing the webhook contract.
         self.reminders: dict[str, dict] = PersistedDict("reminders")
+        self.reminder_jobs: dict[str, ReminderJob] = PersistedDict("reminder_jobs")
 
     # -- seniors ----------------------------------------------------------
     def put_senior(self, senior: Senior) -> Senior:

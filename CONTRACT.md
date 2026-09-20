@@ -47,6 +47,10 @@ rung. Nothing lowers a rule's floor.
 | POST | `/questions/answer` | grounded answer + citations | optional `senior_id` scopes private history |
 | GET | `/datasets/status` | warehouse + table availability | which cards are real vs MOCK |
 | POST | `/webhooks/linq` | `{ok, senior_id, ...}` | backend only, signature-checked off mock |
+| POST | `/reminders/send` | `ReminderResponse` | send immediately through Linq; backend-owned transport |
+| GET | `/seniors/{id}/reminders` | `ReminderJob[]` | scheduled, sent, failed, or cancelled reminders |
+| POST | `/seniors/{id}/reminders` | `ReminderJob` | schedule a one-time phone reminder |
+| DELETE | `/seniors/{id}/reminders/{reminder_id}` | `ReminderJob` | cancel a pending reminder |
 | POST | `/demo/reset` | `Health` | re-seeds; safe to call between demo runs |
 | GET | `/demo/scenarios` | scripted demo inputs + expected level | |
 | WS | `/events` | `ready` frame, then one frame per event | `ping` every 20s |
@@ -112,6 +116,9 @@ Then one frame per event, and `{"type":"ping"}` on an idle 20s:
 
 Event types: `checkin.created`, `evaluation.completed`, `level.changed`,
 `meds.updated`, `handoff.ready`, `caregiver.message`.
+
+`POST /checkins/{checkin_id}/caregiver` sends the completed conversation's
+PHI-safe status update and signed detail link to the first consented caregiver.
 
 ## UI rendering rules
 

@@ -104,6 +104,12 @@ TABLES: dict[str, Table] = {
         "care_plans", "senior_id",
         lambda m: {"senior_id": m.senior_id, "data": _dump(m)},
     ),
+    "reminder_jobs": Table(
+        "reminder_jobs", "id",
+        lambda m: {"id": m.id, "senior_id": m.senior_id,
+                   "scheduled_for": _iso(m.scheduled_for),
+                   "status": m.status, "data": _dump(m)},
+    ),
     "timeline": Table(
         "timeline", "id",
         lambda m: {"id": m[0], "senior_id": m[1], "at": _iso(m[2].at),
@@ -265,7 +271,7 @@ async def hydrate(store: Any) -> dict[str, int]:
 
     from .schemas import (
         Alert, CarePlan, CareCircle, CheckIn, Evaluation, FollowUpJob,
-        Senior, TeachBackResult, TimelineEntry,
+        ReminderJob, Senior, TeachBackResult, TimelineEntry,
     )
 
     loaded: dict[str, int] = {}
@@ -280,6 +286,7 @@ async def hydrate(store: Any) -> dict[str, int]:
                 ("alerts", Alert, lambda m: store.alerts.__setitem__(m.id, m)),
                 ("followups", FollowUpJob, lambda m: store.followups.__setitem__(m.id, m)),
                 ("care_plans", CarePlan, lambda m: store.care_plans.__setitem__(m.senior_id, m)),
+                ("reminder_jobs", ReminderJob, lambda m: store.reminder_jobs.__setitem__(m.id, m)),
             ):
                 try:
                     rows = await _select(client, table)

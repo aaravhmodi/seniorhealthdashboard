@@ -22,9 +22,9 @@ from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
-from .. import auth, caretone, circle, followup, linq, linq_events, links, llm, persistence, retrieval, voice
+from .. import auth, caretone, circle, followup, linq, linq_events, links, llm, persistence, reminders, retrieval, voice
 from ..ladder import evaluate
-from ..notify import notify_caregivers
+from ..notify import notify_caregivers, send as send_notification
 from ..persona import TEACH_BACK, voice_output_available
 from ..schemas import (
     ActionLevel,
@@ -45,8 +45,11 @@ from ..schemas import (
     Health,
     LinqInbound,
     Medication,
+    NotificationReceipt,
     ReminderRequest,
     ReminderResponse,
+    ReminderJob,
+    ReminderScheduleRequest,
     Senior,
     SeniorAnswer,
     SeniorQuestion,
@@ -329,6 +332,43 @@ def get_checkin(
             previous_level=evaluation.previous_level, language=language,
         )
     return CheckInResponse(checkin=checkin, evaluation=evaluation)
+
+
+@router.post(
+    "/checkins/{checkin_id}/caregiver",
+    response_model=NotificationReceipt,
+    tags=["checkins"],
+)
+async def share_checkin_with_caregiver(
+    checkin_id: str,
+    _: auth.Principal = Depends(auth.require_user),
+) -> NotificationReceipt:
+    """Send the current conversation's safe status update to the caregiver."""
+    checkin = store.checkins.get(checkin_id)
+    if not checkin:
+        raise HTTPException(status_code=404, detail="unknown check-in")
+    evaluation = store.evaluation_for_checkin(checkin_id)
+    if not evaluation:
+        raise HTTPException(status_code=409, detail="check-in has no evaluation yet")
+    senior = _get_senior(checkin.senior_id)
+    caregiver = next(
+        (cg for cg in senior.caregivers if circle.consented(senior, cg)), None
+    )
+    if not caregiver:
+        raise HTTPException(status_code=409, detail="no caregiver has consented to receive updates")
+
+    receipt = await send_notification(senior, evaluation, caregiver)
+    store.add_timeline(
+        senior.id,
+        TimelineEntry(
+            at=receipt.sent_at or now(),
+            type=EventType.CAREGIVER_MESSAGE,
+            evaluation_id=evaluation.id,
+            summary=f"Shared conversation with {caregiver.name} ({receipt.status})",
+            detail={"body": receipt.body, "manual": True},
+        ),
+    )
+    return receipt
 
 
 @router.get(
@@ -886,44 +926,62 @@ async def send_reminder(
     names, and always tells the recipient how to answer.
     """
     senior = _get_senior(payload.senior_id)
-    caregivers = circle.escalation_chain(senior, ActionLevel.CALL_CLINIC)
-    caregiver = caregivers[0] if caregivers else None
-    recipient_phones: list[str] = []
-    if payload.recipient in {"self", "both"} and senior.phone_e164:
-        recipient_phones.append(senior.phone_e164)
-    if payload.recipient in {"caregiver", "both"} and caregiver and caregiver.phone_e164:
-        recipient_phones.append(caregiver.phone_e164)
-    # Preserve the original reminder behavior for older enrolled records that
-    # have no patient phone but do have a care-circle phone.
-    if payload.recipient == "self" and not recipient_phones and caregiver and caregiver.phone_e164:
-        recipient_phones.append(caregiver.phone_e164)
-    if not recipient_phones:
-        target = "emergency-contact caregiver" if payload.recipient == "caregiver" else "selected recipient"
-        raise HTTPException(status_code=409, detail=f"no phone is enrolled for the {target}")
-    body = caretone.reminder_body(
-        senior.display_name.split()[0], payload.kind, circle.detail_link(senior.id), payload.language
+    result = await reminders.send_now(
+        senior, payload.kind, payload.language, payload.recipient
     )
-    circle_state = store.circles.get(senior.id)
-    results = [await linq.send_direct(phone, body) for phone in dict.fromkeys(recipient_phones)]
-    for phone, result in zip(dict.fromkeys(recipient_phones), results):
-        if result.message_id:
-            store.reminders[result.message_id] = {
-                "senior_id": senior.id, "kind": payload.kind, "recipient": phone,
-                "status": "sent" if result.ok else "failed", "body": body,
-            }
-    ok = all(result.ok for result in results)
-    message_ids = [result.message_id for result in results if result.message_id]
-    errors = [result.error for result in results if result.error]
-    return ReminderResponse(
-        ok=ok,
-        mocked=all(result.mocked for result in results),
-        kind=payload.kind,
-        recipient=", ".join(dict.fromkeys(recipient_phones)),
-        recipients=list(dict.fromkeys(recipient_phones)),
-        message_id=message_ids[0] if message_ids else None,
-        body=body,
-        error="; ".join(errors) if errors else None,
+    if not result.ok and not result.recipients:
+        raise HTTPException(status_code=409, detail=result.error or "no recipient phone is enrolled")
+    return result
+
+
+@router.get("/seniors/{senior_id}/reminders", response_model=list[ReminderJob], tags=["reminders"])
+def list_reminders(
+    senior_id: str, _: auth.Principal = Depends(auth.require_user)
+) -> list[ReminderJob]:
+    _get_senior(senior_id)
+    return sorted(
+        (job for job in store.reminder_jobs.values() if job.senior_id == senior_id),
+        key=lambda job: job.scheduled_for,
     )
+
+
+@router.post("/seniors/{senior_id}/reminders", response_model=ReminderJob, status_code=201, tags=["reminders"])
+def schedule_reminder(
+    senior_id: str,
+    payload: ReminderScheduleRequest,
+    _: auth.Principal = Depends(auth.require_user),
+) -> ReminderJob:
+    senior = _get_senior(senior_id)
+    if payload.senior_id != senior_id:
+        raise HTTPException(status_code=400, detail="senior ID does not match the request path")
+    if payload.scheduled_for.tzinfo is None:
+        raise HTTPException(status_code=422, detail="scheduled_for must include a timezone")
+    try:
+        return reminders.create_job(
+            senior,
+            payload.kind,
+            payload.language,
+            payload.recipient,
+            payload.scheduled_for,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/seniors/{senior_id}/reminders/{reminder_id}", response_model=ReminderJob, tags=["reminders"])
+def cancel_reminder(
+    senior_id: str,
+    reminder_id: str,
+    _: auth.Principal = Depends(auth.require_user),
+) -> ReminderJob:
+    _get_senior(senior_id)
+    job = store.reminder_jobs.get(reminder_id)
+    if not job or job.senior_id != senior_id:
+        raise HTTPException(status_code=404, detail="unknown reminder")
+    if job.status == "scheduled":
+        job.status = "cancelled"
+        store.reminder_jobs[job.id] = job
+    return job
 
 
 @router.post("/demo/reset", tags=["demo"])
@@ -939,6 +997,7 @@ async def demo_reset() -> Health:
     store.care_plans.clear()
     store.teachbacks.clear()
     store.reminders.clear()
+    store.reminder_jobs.clear()
     # A reset that leaves yesterday's rows in Postgres is not a reset: the
     # next boot would hydrate them straight back.
     await persistence.wipe()

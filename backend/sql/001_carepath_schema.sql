@@ -103,6 +103,16 @@ create table if not exists carepath.teachbacks (
 create index if not exists teachbacks_senior_at
   on carepath.teachbacks (senior_id, at desc);
 
+create table if not exists carepath.reminder_jobs (
+  id            text primary key,
+  senior_id     text not null,
+  scheduled_for timestamptz not null,
+  status        text not null,
+  data          jsonb not null
+);
+create index if not exists reminder_jobs_due
+  on carepath.reminder_jobs (scheduled_for) where status = 'scheduled';
+
 -- --------------------------------------------------------------------------
 -- Lock it down
 -- --------------------------------------------------------------------------
@@ -115,7 +125,7 @@ declare t text;
 begin
   foreach t in array array[
     'seniors', 'checkins', 'evaluations', 'timeline',
-    'circles', 'alerts', 'followups', 'care_plans', 'teachbacks'
+    'circles', 'alerts', 'followups', 'care_plans', 'teachbacks', 'reminder_jobs'
   ] loop
     execute format('alter table carepath.%I enable row level security', t);
     execute format('revoke all on carepath.%I from anon, authenticated', t);

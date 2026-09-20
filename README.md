@@ -46,7 +46,7 @@ scripted demo inputs with their expected levels.
 | OpenAI | **wired** | `gpt-5.6-luna`; falls back to templates without a key |
 | dataset pipelines | **written and tested** | run the loaders (docs/DATA.md) to replace the MOCK cards |
 | NHAMCS / NEISS / FAERS numbers | placeholder until loaded | `source` starts with `MOCK` |
-| Linq send | mocked unless `LINQ_API_KEY` set and `MOCK_MODE=false` | |
+| Linq send and scheduled reminders | mocked unless `LINQ_API_KEY` set and `MOCK_MODE=false` | The website schedules or sends; FastAPI delivers through Linq |
 | Deepgram | **real** | speech in and out, verified by a live round trip; streaming is the next piece |
 | storage | in memory, behind a `Store` interface | swap to DuckDB/Postgres |
 

@@ -54,7 +54,11 @@ export interface HandoffPacket {
   medications: Medication[]; allergies: string[]; conditions: string[];
   recent_checkins: CheckIn[]; disclaimer: string;
 }
-export interface ReminderResponse { ok: boolean; mocked: boolean; kind: string; recipient?: string; recipients?: string[]; message_id?: string; body: string; reply_expected: string; error?: string }
+export type ReminderKind = 'meds' | 'appointment' | 'refill' | 'caregiver_update'
+export type ReminderRecipient = 'self' | 'caregiver' | 'both'
+export interface ReminderResponse { ok: boolean; mocked: boolean; kind: string; recipient?: string; recipients?: string[]; message_id?: string; message_ids?: string[]; body: string; reply_expected: string; error?: string }
+export interface ReminderJob { id: string; senior_id: string; kind: ReminderKind; language: string; recipient: ReminderRecipient; scheduled_for: string; status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled'; created_at: string; sent_at?: string; message_ids: string[]; error?: string }
+export interface NotificationReceipt { channel: 'linq' | 'none'; to: string; thread_id?: string; body: string; status: 'sent' | 'mocked' | 'failed' | 'skipped'; sent_at?: string }
 
 // -- Caregiver view (opened from the link in a Linq text) -------------------
 export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }
