@@ -1402,7 +1402,14 @@ function AccountApp() {
       userId = data.user.id;
       hasSession = Boolean(data.session);
     }
-    const savedPerson = { ...person, id: userId };
+    // Linq accepts an iMessage email as a recipient. Keep the account email
+    // on the profile so explicit caregiver updates do not depend on a phone
+    // field being formatted as E.164.
+    const savedPerson = {
+      ...person,
+      id: userId,
+      linq_handles: person.linq_handles?.length ? person.linq_handles : [account.email],
+    };
     localStorage.setItem(`carepath-profile:${savedPerson.id}`, JSON.stringify(savedPerson));
     localStorage.setItem(`carepath-plan:${savedPerson.id}`, JSON.stringify(carePlan));
     try {

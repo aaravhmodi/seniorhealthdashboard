@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # The care team's own handle, added to every circle so the family is
     # never texting a robot with nobody behind it.
     linq_care_team_number: str = ""
+    # Destination for the dashboard's explicit "send to my caregiver" action.
+    # This may be an iMessage email or an E.164 number; it is kept separate
+    # from the caregiver profile phone because demo profiles often contain a
+    # plain local number that Linq cannot accept.
+    linq_default_recipient: str = ""
 
     # Retry posture. Linq's own guidance: honour Retry-After on a 429, else
     # exponential backoff, and keep a hard upper bound rather than hammering

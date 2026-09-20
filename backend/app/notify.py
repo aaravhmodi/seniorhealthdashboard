@@ -66,19 +66,39 @@ def recipients(senior: Senior, evaluation: Evaluation) -> list[Caregiver]:
 
 
 async def send(
-    senior: Senior, evaluation: Evaluation, caregiver: Caregiver
+    senior: Senior, evaluation: Evaluation, caregiver: Caregiver,
+    recipient: str | None = None,
 ) -> NotificationReceipt:
     """One-to-one send. Used for escalations and for a senior with no circle yet."""
     body = compose(senior, evaluation, caregiver)
     receipt = NotificationReceipt(
         to=caregiver.id, thread_id=caregiver.linq_thread_id, body=body
     )
-    result = await linq.send_direct(caregiver.phone_e164, body)
+    result = await linq.send_direct(recipient or caregiver.phone_e164, body)
     receipt.status = "mocked" if result.mocked else ("sent" if result.ok else "failed")
     receipt.thread_id = result.chat_id or caregiver.linq_thread_id
     receipt.sent_at = now()
     receipt.error = result.error
     return receipt
+
+
+def manual_recipient(senior: Senior, caregiver: Caregiver) -> str | None:
+    """Return the safe destination for the dashboard's manual update.
+
+    Manual updates are intentionally directed to the configured account email
+    when present. A caregiver phone is still used by the automatic escalation
+    path, but it must not be used here when it is a local-format number that
+    Linq will reject.
+    """
+    configured = get_settings().linq_default_recipient.strip()
+    if configured:
+        return configured
+    for handle in senior.linq_handles:
+        if "@" in handle:
+            return handle
+    if "@" in caregiver.phone_e164:
+        return caregiver.phone_e164
+    return None
 
 
 async def notify_caregivers(
@@ -126,6 +146,7 @@ __all__ = [
     "STATUS_WORD",
     "ActionLevel",
     "compose",
+    "manual_recipient",
     "recipients",
     "send",
     "notify_caregivers",

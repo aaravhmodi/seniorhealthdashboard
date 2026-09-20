@@ -24,7 +24,7 @@ from ..extraction import extract
 from ..handoff import build_packet, should_build
 from .. import auth, caretone, circle, followup, linq, linq_events, links, llm, persistence, reminders, retrieval, voice
 from ..ladder import evaluate
-from ..notify import notify_caregivers, send as send_notification
+from ..notify import manual_recipient, notify_caregivers, send as send_notification
 from ..persona import TEACH_BACK, voice_output_available
 from ..schemas import (
     ActionLevel,
@@ -376,7 +376,13 @@ async def share_checkin_with_caregiver(
     if not caregiver:
         raise HTTPException(status_code=409, detail="no caregiver has consented to receive updates")
 
-    receipt = await send_notification(senior, evaluation, caregiver)
+    recipient = manual_recipient(senior, caregiver)
+    if not recipient:
+        raise HTTPException(
+            status_code=409,
+            detail="no Linq email recipient is configured for caregiver updates",
+        )
+    receipt = await send_notification(senior, evaluation, caregiver, recipient)
     store.add_timeline(
         senior.id,
         TimelineEntry(
