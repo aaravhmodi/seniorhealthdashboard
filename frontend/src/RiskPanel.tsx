@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import type { DatasetNote, RiskAssessment, RiskConcern, RiskDriver } from "./types";
+import { supportedLanguage } from "./i18n";
+import { getRiskCopy, type RiskCopy } from "./riskCopy";
 
 // -- What this could be ----------------------------------------------------
 // The dashboard used to say "go to the emergency department" without saying
@@ -15,7 +18,7 @@ const BAND_TONE: Record<string, string> = {
   monitor: "calm", today: "watch", emergency: "urgent", now: "critical",
 };
 
-function DriverRow({ driver, widest }: { driver: RiskDriver; widest: number }) {
+function DriverRow({ driver, widest, copy }: { driver: RiskDriver; widest: number; copy: RiskCopy }) {
   const magnitude = Math.abs(driver.delta_points);
   return (
     <div className={`driver-row ${driver.delta_points < 0 ? "lowers" : ""}`}>
@@ -31,7 +34,7 @@ function DriverRow({ driver, widest }: { driver: RiskDriver; widest: number }) {
       <p className="driver-detail">{driver.detail}</p>
       <p className="driver-source">
         <span className={`driver-badge ${driver.fitted ? "fitted" : "chosen"}`}>
-          {driver.fitted ? "measured" : "clinical weighting"}
+          {driver.fitted ? copy.measured : copy.clinicalWeighting}
         </span>
         {driver.source}
       </p>
@@ -39,9 +42,9 @@ function DriverRow({ driver, widest }: { driver: RiskDriver; widest: number }) {
   );
 }
 
-function ConcernCard({ concern, open, onToggle, audience }: {
+function ConcernCard({ concern, open, onToggle, audience, copy }: {
   concern: RiskConcern; open: boolean; onToggle: () => void;
-  audience: "patient" | "caregiver";
+  audience: "patient" | "caregiver"; copy: RiskCopy;
 }) {
   const widest = Math.max(1, ...concern.drivers.map((driver) => Math.abs(driver.delta_points)));
   const detailId = `concern-why-${concern.code}`;
@@ -49,7 +52,7 @@ function ConcernCard({ concern, open, onToggle, audience }: {
     <article className={`concern-card ${BAND_TONE[concern.band] || "calm"}`}>
       <div className="concern-top">
         <div className="concern-name">
-          <h4>{concern.label}</h4>
+          <h4>{copy.concernLabels[concern.code] || concern.label}</h4>
           <p>{concern.plain}</p>
         </div>
         <div className="concern-figure">
@@ -62,11 +65,11 @@ function ConcernCard({ concern, open, onToggle, audience }: {
         <div className="concern-meter-base" style={{ left: `${concern.base_rate_percent}%` }} />
       </div>
       <p className="concern-scale-note">
-        Starts at {concern.base_rate_percent.toFixed(0)}% for someone {audience === "patient" ? "your" : "their"} age with this complaint
-        {concern.drivers.length > 0 && <>, then moves to {concern.probability_percent.toFixed(0)}% on what {audience === "patient" ? "you" : "they"} told us</>}
+        {copy.startsAt} {concern.base_rate_percent.toFixed(0)}% {audience === "patient" ? "for someone your age" : "for someone their age"} {copy.withComplaint}
+        {concern.drivers.length > 0 && <>; {copy.thenMoves} {concern.probability_percent.toFixed(0)}% {copy.onWhat} {audience === "patient" ? "you" : "they"} told us</>}
       </p>
       <p className="concern-action">
-        <strong>At {concern.probability_percent.toFixed(0)}%:</strong> {concern.action}
+        <strong>{copy.at} {concern.probability_percent.toFixed(0)}%:</strong> {copy.bandActions[concern.band] || concern.action}
       </p>
       <button
         type="button"
@@ -76,32 +79,30 @@ function ConcernCard({ concern, open, onToggle, audience }: {
         onClick={onToggle}
       >
         <ChevronDown size={16} className={open ? "rotated" : ""} />
-        {open ? "Hide the working" : "Why this number?"}
+        {open ? copy.hideWorking : copy.whyNumber}
       </button>
       {open && (
         <div className="concern-why" id={detailId}>
           <div className="why-block">
-            <h5>What raised it at all</h5>
+            <h5>{copy.whatRaised}</h5>
             <ul className="matched-list">
               {concern.matched_on.map((match) => <li key={match}>{match}</li>)}
             </ul>
           </div>
           <div className="why-block">
-            <h5>Where the number started</h5>
+            <h5>{copy.whereStarted}</h5>
             <p>{concern.base_rate_detail}</p>
           </div>
           {concern.drivers.length > 0 && (
             <div className="why-block">
-              <h5>What moved it, and by how much</h5>
+              <h5>{copy.whatMoved}</h5>
               <div className="driver-list">
                 {concern.drivers.map((driver) => (
-                  <DriverRow key={driver.label} driver={driver} widest={widest} />
+                  <DriverRow key={driver.label} driver={driver} widest={widest} copy={copy} />
                 ))}
               </div>
               <p className="driver-caveat">
-                Each figure is this check-in&rsquo;s percentage with that piece of
-                evidence minus the percentage without it. They are not slices of a
-                pie, so they do not add up to the total.
+                {copy.driverCaveat}
               </p>
             </div>
           )}
@@ -115,18 +116,18 @@ export function RiskPanel({ risk, audience = "patient" }: {
   risk: RiskAssessment;
   audience?: "patient" | "caregiver";
 }) {
+  const { i18n } = useTranslation();
+  const copy = getRiskCopy(supportedLanguage(i18n.language));
   const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
   const [showModel, setShowModel] = useState(false);
   const [showSources, setShowSources] = useState(false);
   if (!risk.concerns.length) {
     return (
       <section className="risk-panel risk-panel-empty" aria-labelledby="risk-title-empty">
-        <p className="eyebrow">What this could be</p>
-        <h2 id="risk-title-empty">No specific concern was triggered</h2>
+        <p className="eyebrow">{copy.whatCouldBe}</p>
+        <h2 id="risk-title-empty">{copy.noConcern}</h2>
         <p className="risk-sub">
-          Nothing in this check-in crossed a named screening threshold.
-          Keep watching, and answer the follow-up question above so the next check-in
-          can become more specific.
+          {copy.noConcernText}
         </p>
       </section>
     );
@@ -134,20 +135,23 @@ export function RiskPanel({ risk, audience = "patient" }: {
   const top = risk.concerns[0];
   const others = risk.concerns.length - 1;
 
+  const explanation = copy.riskExplanation
+    .replace("{presentation}", audience === "patient" ? "yours" : "this one")
+    .replace("{possessive}", audience === "patient" ? "your" : "their")
+    .replace("{possessive}", audience === "patient" ? "your" : "their")
+    .replace("{subject}", audience === "patient" ? "you" : "they");
+  const topLabel = copy.concernLabels[top.code] || top.label;
+
   return (
     <section className="risk-panel" aria-labelledby="risk-title">
       <div className="risk-heading">
         <div>
-          <p className="eyebrow">What this could be</p>
+          <p className="eyebrow">{copy.whatCouldBe}</p>
           <h2 id="risk-title">
-            {top.label}
-            {others > 0 && <span className="risk-others">, and {others} other thing{others === 1 ? "" : "s"} worth naming</span>}
+            {topLabel}
+            {others > 0 && <span className="risk-others">{copy.otherThing(others)}</span>}
           </h2>
-        <p className="risk-sub">
-            Each percentage is how often a presentation like {audience === "patient" ? "yours" : "this one"} ended in
-            hospital rather than being sent home, adjusted for {audience === "patient" ? "your" : "their"} age, {audience === "patient" ? "your" : "their"}
-            medicines and what {audience === "patient" ? "you" : "they"} told us today.
-          </p>
+          <p className="risk-sub">{explanation}</p>
         </div>
         <div className={`risk-headline ${BAND_TONE[top.band] || "calm"}`}>
           <strong>{top.probability_percent.toFixed(0)}<small>%</small></strong>
@@ -163,7 +167,7 @@ export function RiskPanel({ risk, audience = "patient" }: {
               className={`band-zone ${BAND_TONE[band.band]}`}
               style={{ width: `${band.upper_percent - band.lower_percent}%` }}
             >
-              <span>{band.label}</span>
+              <span>{copy.bandLabels[band.band] || band.label}</span>
             </div>
           ))}
           <div className="band-marker" style={{ left: `${top.probability_percent}%` }} aria-hidden="true" />
@@ -183,6 +187,7 @@ export function RiskPanel({ risk, audience = "patient" }: {
             concern={concern}
             open={openCode === concern.code}
             audience={audience}
+            copy={copy}
             onToggle={() => setOpenCode(openCode === concern.code ? null : concern.code)}
           />
         ))}
@@ -196,7 +201,7 @@ export function RiskPanel({ risk, audience = "patient" }: {
           onClick={() => setShowSources(!showSources)}
         >
           <ChevronDown size={16} className={showSources ? "rotated" : ""} />
-          Where these numbers come from
+          {copy.whereNumbers}
         </button>
         {showSources && (
           <ul className="source-list">
@@ -205,8 +210,8 @@ export function RiskPanel({ risk, audience = "patient" }: {
                 <div className="source-head">
                   <strong>{dataset.name}</strong>
                   <span className="source-role">{dataset.role}</span>
-                  {dataset.trained && <span className="source-tag trained">model trained on this</span>}
-                  {!dataset.loaded && <span className="source-tag missing">not loaded here</span>}
+                  {dataset.trained && <span className="source-tag trained">{copy.trainedModel}</span>}
+                  {!dataset.loaded && <span className="source-tag missing">{copy.notLoaded}</span>}
                 </div>
                 <p>{dataset.detail}</p>
               </li>
@@ -215,9 +220,9 @@ export function RiskPanel({ risk, audience = "patient" }: {
         )}
         {risk.model_risk_percent !== undefined && risk.model_risk_percent !== null && (
           <p className="model-headline">
-            The trained model reads this check-in at{" "}
+            {copy.modelReads}{" "}
             <strong>{risk.model_risk_percent.toFixed(0)}%</strong> overall risk of
-            needing admission or observation.
+            {copy.overallRisk}
           </p>
         )}
         <button
@@ -227,33 +232,31 @@ export function RiskPanel({ risk, audience = "patient" }: {
           onClick={() => setShowModel(!showModel)}
         >
           <ChevronDown size={16} className={showModel ? "rotated" : ""} />
-          How that model was trained
+          {copy.howModel}
         </button>
         {showModel && (
           <div className="model-detail">
             <p>{risk.model_basis}</p>
             <div className="model-stats">
-              {risk.model_n ? <div><span>Training records</span><strong>{risk.model_n.toLocaleString()}</strong></div> : null}
-              {risk.model_years.length ? <div><span>Years</span><strong>{risk.model_years.join(", ")}</strong></div> : null}
-              {risk.model_auc ? <div><span>Held-out AUC</span><strong>{risk.model_auc.toFixed(3)}</strong></div> : null}
-              {risk.model_holdout_years.length ? <div><span>Tested on</span><strong>{risk.model_holdout_years.join(", ")}</strong></div> : null}
+              {risk.model_n ? <div><span>{copy.trainingRecords}</span><strong>{risk.model_n.toLocaleString()}</strong></div> : null}
+              {risk.model_years.length ? <div><span>{copy.years}</span><strong>{risk.model_years.join(", ")}</strong></div> : null}
+              {risk.model_auc ? <div><span>{copy.heldOutAuc}</span><strong>{risk.model_auc.toFixed(3)}</strong></div> : null}
+              {risk.model_holdout_years.length ? <div><span>{copy.testedOn}</span><strong>{risk.model_holdout_years.join(", ")}</strong></div> : null}
             </div>
             {risk.model_tokens.length > 0 && (
               <>
-          <h5>What it keyed on in {audience === "patient" ? "your" : "their"} words</h5>
+                <h5>{copy.keyedOn.replace("{possessive}", audience === "patient" ? "your" : "their")}</h5>
                 <ul className="token-list">
                   {risk.model_tokens.map((token) => <li key={token}>{token}</li>)}
                 </ul>
                 <p className="driver-caveat">
-                  These are the terms with the largest positive contribution to
-                  this score, read straight off the fitted model &mdash; not a
-                  guess about what it might have used.
+                  {copy.modelCaveat}
                 </p>
               </>
             )}
           </div>
         )}
-        <p className="risk-ladder-note">{risk.ladder_note}</p>
+        <p className="risk-ladder-note">{copy.ladderNote}</p>
       </div>
     </section>
   );
