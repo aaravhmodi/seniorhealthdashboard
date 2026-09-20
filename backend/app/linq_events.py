@@ -89,7 +89,9 @@ def normalize(payload: dict[str, Any]) -> Optional[LinqInbound]:
         except Exception:
             return None
 
-    event = str(payload.get("event") or payload.get("type") or "")
+    # Linq's current webhook envelope calls this `event_type`; older payloads
+    # and our flat test contract use `event` or `type`.
+    event = str(payload.get("event") or payload.get("type") or payload.get("event_type") or "")
     data = payload.get("data")
     if not isinstance(data, dict):
         return None
