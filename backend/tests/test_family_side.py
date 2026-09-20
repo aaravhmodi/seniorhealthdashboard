@@ -211,6 +211,15 @@ def test_demo_reminder_is_sent_to_the_senior_and_done_is_recorded(client):
     assert next(iter(store.reminders.values()))["status"] == "acknowledged"
 
 
+def test_unrecognized_caregiver_message_gets_a_caring_reply(client):
+    response = client.post(
+        "/webhooks/linq",
+        json={"thread_id": "", "from_phone_e164": "+16175550142", "text": "I am worried and need you with me"},
+    )
+    assert response.status_code == 200
+    assert "conversation_replied" in response.json()["actions"]
+
+
 def test_enrolling_the_same_number_twice_does_not_double_the_texts(client):
     _enroll(client)
     first = len(client.get("/seniors/sen_rosa").json()["caregivers"])

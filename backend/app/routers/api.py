@@ -804,6 +804,9 @@ async def linq_webhook(
     elif intent == "help":
         if await linq_events.answer_help(senior, chat_id, payload.from_phone_e164):
             actions.append("help_sent")
+    elif payload.text and not intent:
+        if await linq_events.answer_conversation(senior, chat_id, payload.from_phone_e164):
+            actions.append("conversation_replied")
     elif intent == "stop" and caregiver:
         # Consent withdrawn in the only place they can withdraw it: the thread.
         senior.consent[f"share_with:{caregiver.id}"] = False
