@@ -1,11 +1,22 @@
-"""In-memory store.
+"""In-memory store, with write-through persistence.
 
-Sprint 0 keeps everything in a dict so nobody is blocked on a database. The
-interface below is the only thing the routers touch, so Sprint 2 can swap in
-DuckDB or Postgres without the API changing shape.
+Sprint 0 kept everything in a dict so nobody was blocked on a database. The
+interface below is still the only thing the routers touch -- and that is what
+let Postgres arrive underneath it without a single call site changing.
+
+Reads stay in the dict, at memory speed and synchronous. Writes additionally
+mark the entity dirty; `persistence.flusher` pushes dirty rows to Supabase in
+the background, and `persistence.hydrate` refills the dict on boot. With
+Supabase unconfigured every one of those calls is a no-op and this is exactly
+the dict it always was.
+
+`_persist` is deliberately the last statement of each write method: a
+persistence problem must never prevent the in-memory write that the request is
+actually waiting on.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import threading
 from collections import defaultdict
@@ -30,6 +41,46 @@ _counters: defaultdict[str, itertools.count] = defaultdict(lambda: itertools.cou
 _lock = threading.Lock()
 
 
+def _persist(table: str, model) -> None:
+    """Queue a row for the background flush. Never raises, never blocks."""
+    try:
+        from . import persistence
+
+        persistence.mark(table, model)
+    except Exception:  # pragma: no cover - persistence must never break a write
+        pass
+
+
+def stable_id(*parts: str) -> str:
+    """A content-derived id that is the same in every process.
+
+    Python's hash() is salted per process, so using it here would mint a new
+    id for the same timeline entry after every restart and duplicate the row
+    on re-persist. This does not.
+    """
+    digest = hashlib.sha1("|".join(parts).encode()).hexdigest()
+    return digest[:16]
+
+
+class PersistedDict(dict):
+    """A dict that queues each value for persistence as it is written.
+
+    The family-side collections are assigned into directly all over circle.py
+    and followup.py (`store.alerts[a.id] = a`). Routing those through methods
+    would mean finding every one and trusting the next person to remember.
+    Doing it here means a write cannot be forgotten, including from code that
+    does not exist yet.
+    """
+
+    def __init__(self, table: str) -> None:
+        super().__init__()
+        self._table = table
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        _persist(self._table, value)
+
+
 def new_id(prefix: str) -> str:
     with _lock:
         return f"{prefix}_{next(_counters[prefix]):05d}"
@@ -47,15 +98,16 @@ class Store:
         self.handoffs: dict[str, HandoffPacket] = {}
         self.timeline: dict[str, list[TimelineEntry]] = defaultdict(list)
         # -- Linq family side --------------------------------------------
-        self.circles: dict[str, CareCircle] = {}          # senior_id -> group chat
-        self.alerts: dict[str, Alert] = {}                # alert_id -> alert
-        self.followups: dict[str, FollowUpJob] = {}       # job_id -> job
-        self.care_plans: dict[str, CarePlan] = {}         # senior_id -> discharge plan
+        self.circles: dict[str, CareCircle] = PersistedDict("circles")
+        self.alerts: dict[str, Alert] = PersistedDict("alerts")
+        self.followups: dict[str, FollowUpJob] = PersistedDict("followups")
+        self.care_plans: dict[str, CarePlan] = PersistedDict("care_plans")
         self.teachbacks: dict[str, list[TeachBackResult]] = defaultdict(list)
 
     # -- seniors ----------------------------------------------------------
     def put_senior(self, senior: Senior) -> Senior:
         self.seniors[senior.id] = senior
+        _persist("seniors", senior)
         return senior
 
     def get_senior(self, senior_id: str) -> Senior | None:
@@ -92,6 +144,7 @@ class Store:
     # -- check-ins --------------------------------------------------------
     def put_checkin(self, checkin: CheckIn) -> CheckIn:
         self.checkins[checkin.id] = checkin
+        _persist("checkins", checkin)
         return checkin
 
     def checkins_for(self, senior_id: str, limit: int | None = None) -> list[CheckIn]:
@@ -105,6 +158,7 @@ class Store:
     # -- evaluations ------------------------------------------------------
     def put_evaluation(self, ev: Evaluation) -> Evaluation:
         self.evaluations[ev.id] = ev
+        _persist("evaluations", ev)
         return ev
 
     def evaluation_for_checkin(self, checkin_id: str) -> Evaluation | None:
@@ -123,6 +177,11 @@ class Store:
     # -- timeline ---------------------------------------------------------
     def add_timeline(self, senior_id: str, entry: TimelineEntry) -> None:
         self.timeline[senior_id].append(entry)
+        # A timeline entry has no id of its own, so one is minted here. It has
+        # to be stable across a replay of the same entry, or a restart would
+        # duplicate the row -- hence the content, not a counter.
+        row_id = stable_id(senior_id, entry.at.isoformat(), entry.summary)
+        _persist("timeline", (row_id, senior_id, entry))
 
     def timeline_for(self, senior_id: str) -> list[TimelineEntry]:
         return sorted(self.timeline[senior_id], key=lambda e: e.at, reverse=True)

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from . import followup, linq, linq_events
+from . import followup, linq, linq_events, persistence
 from .config import get_settings
 from .routers import api, ws
 from .schemas import CONTRACT_VERSION
@@ -48,12 +48,19 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     seed(store)
+    # Anything a previous process learned -- open circles, unacknowledged
+    # alerts, scheduled follow-ups -- comes back before the scheduler starts,
+    # so a restart does not quietly drop an escalation clock on the floor.
+    await persistence.hydrate(store)
     # Index on boot so the first voice session already has context.
     api.retrieval_reindex()
 
     # The follow-up and escalation clock. One task, cancelled on shutdown, so
     # a reload does not leave a second one sending duplicate texts.
     scheduler = asyncio.create_task(followup.scheduler())
+    flusher = asyncio.create_task(
+        persistence.flusher(get_settings().supabase_flush_seconds)
+    )
 
     # Tell Linq where to deliver tapbacks and replies. Best effort: a failure
     # here means inbound stops working, not that the app stops booting.
@@ -76,8 +83,15 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         scheduler.cancel()
+        flusher.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler
+        with suppress(asyncio.CancelledError):
+            await flusher
+        # One last write on the way out, so a clean shutdown loses nothing
+        # that was still sitting in the queue.
+        with suppress(Exception):
+            await persistence.flush()
 
 
 app = FastAPI(

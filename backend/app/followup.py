@@ -36,7 +36,7 @@ import unicodedata
 from datetime import timedelta
 from typing import Iterable, Optional
 
-from . import caretone, circle, linq
+from . import caretone, circle, linq, persistence
 from .config import get_settings
 from .events import bus
 from .schemas import (
@@ -51,7 +51,7 @@ from .schemas import (
     TimelineEntry,
 )
 from .persona import TEACH_BACK
-from .store import new_id, now, store
+from .store import new_id, now, stable_id, store
 
 # Words that carry no meaning for whether an instruction was understood.
 _STOPWORDS = {
@@ -161,6 +161,10 @@ async def run_teach_back(
         result.caregiver_alerted = await _alert_teach_back_miss(senior)
 
     store.teachbacks[senior.id].append(result)
+    persistence.mark(
+        "teachbacks",
+        (stable_id(senior.id, result.at.isoformat(), str(result.score)), result),
+    )
     if followup_id and followup_id in store.followups:
         job = store.followups[followup_id]
         job.status = "answered"

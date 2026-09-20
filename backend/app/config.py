@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # picks it up instead, so a rate limit never blocks a check-in.
     linq_max_wait_s: float = 8.0
 
+    # -- Supabase (durable state) -----------------------------------------
+    # Unset means in-memory only, which is exactly how this ran before. The
+    # service-role key bypasses RLS and is backend-only: it must never be
+    # given to the browser, which keeps using the publishable key for auth.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_timeout_s: float = 10.0
+    supabase_flush_seconds: float = 3.0
+
     duckdb_path: str = "./data/warehouse.duckdb"
 
     # -- Follow-up and escalation timing ----------------------------------

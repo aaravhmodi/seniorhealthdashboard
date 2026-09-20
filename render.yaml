@@ -56,3 +56,13 @@ services:
       # texting a thread with nobody behind it.
       - key: LINQ_CARE_TEAM_NUMBER
         sync: false
+
+      # -- Supabase (durable state) --------------------------------------
+      # Without these the free tier's 15-minute sleep drops every open circle,
+      # unacknowledged alert and scheduled follow-up. Run
+      # backend/sql/001_carepath_schema.sql once, then set both here.
+      # SERVICE_ROLE bypasses RLS and is backend-only.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -21,7 +21,7 @@ from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
-from .. import caretone, circle, followup, linq, linq_events, llm, retrieval, voice
+from .. import caretone, circle, followup, linq, linq_events, llm, persistence, retrieval, voice
 from ..ladder import evaluate
 from ..notify import notify_caregivers
 from ..persona import TEACH_BACK, voice_output_available
@@ -706,7 +706,7 @@ async def linq_status() -> dict:
 
 
 @router.post("/demo/reset", tags=["demo"])
-def demo_reset() -> Health:
+async def demo_reset() -> Health:
     store.seniors.clear()
     store.checkins.clear()
     store.evaluations.clear()
@@ -717,6 +717,9 @@ def demo_reset() -> Health:
     store.followups.clear()
     store.care_plans.clear()
     store.teachbacks.clear()
+    # A reset that leaves yesterday's rows in Postgres is not a reset: the
+    # next boot would hydrate them straight back.
+    await persistence.wipe()
     seed(store)
     retrieval_reindex()
     return Health(mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors))
@@ -1023,6 +1026,7 @@ def datasets_status() -> dict:
         "warehouse": status(),
         "tables_available": available(),
         "outcome_model": outcome_model.status(),
+        "persistence": persistence.status(),
     }
 
 
