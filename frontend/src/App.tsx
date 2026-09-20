@@ -70,6 +70,19 @@ function displayCheckinText(text: string | undefined, language: string) {
   return presetCheckinText[text || ""]?.[language] || text;
 }
 
+function timeGreeting(name: string, language: string) {
+  const hour = new Date().getHours();
+  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+  const greetings: Record<string, Record<string, string>> = {
+    en: { morning: "Good morning", afternoon: "Good afternoon", evening: "Good evening" },
+    es: { morning: "Buenos días", afternoon: "Buenas tardes", evening: "Buenas noches" },
+    pt: { morning: "Bom dia", afternoon: "Boa tarde", evening: "Boa noite" },
+    zh: { morning: "早上好", afternoon: "下午好", evening: "晚上好" },
+    hi: { morning: "सुप्रभात", afternoon: "नमस्ते", evening: "शुभ संध्या" },
+  };
+  return `${(greetings[language] || greetings.en)[part]}, ${name}.`;
+}
+
 type FollowUpKey = "back-severity" | "back-warning-signs";
 type FollowUpRecord = { question: string; answer: string; checkinId: string };
 const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
@@ -965,8 +978,8 @@ function Dashboard({
       {page === "health" && (
         <main className="dashboard">
           <div className="greeting">
-            <h1>
-              {t("greeting", { name: senior.display_name.split(" ")[0] })}
+            <h1 className="moving-greeting">
+              {timeGreeting(senior.display_name.split(" ")[0], i18n.language)}
             </h1>
             <p>{t("feeling")}</p>
           </div>
@@ -1069,10 +1082,10 @@ function Dashboard({
       {page === "history" && (
         <main className="dashboard">
           <h1>{t("history")}</h1>
-          {Object.keys(symptomCounts).length > 0 && <section className="symptom-trends" aria-label="Recurring symptoms">
+          <section className="symptom-trends" aria-label="Recurring symptoms">
             <h2>Recurring symptoms</h2>
-            {Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{label}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>)}
-          </section>}
+            {Object.keys(symptomCounts).length ? Object.entries(symptomCounts).sort(([, a], [, b]) => b - a).map(([label, count]) => <div className="trend-row" key={label}><span>{label}</span><div className="trend-track"><div style={{ width: `${(count / highestSymptomCount) * 100}%` }} /></div><strong>{count}</strong></div>) : <p className="muted">Your recurring symptoms will appear here after you record them.</p>}
+          </section>
           {historyCheckins.map((checkin) => (
             <article className="history-record" key={checkin.id}>
               <button className="history-record-button" type="button" onClick={() => void openCheckin(checkin)} aria-expanded={expandedCheckin === checkin.id}>
