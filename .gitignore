@@ -11,3 +11,10 @@ data/
 node_modules/
 dist/
 .DS_Store
+
+# Local tooling scratch: worktrees, deploy links, Postman workspace metadata
+.claude/
+.vercel/
+.postman/
+postman/
+.pytest_tmp/
