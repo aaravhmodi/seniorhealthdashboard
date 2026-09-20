@@ -311,6 +311,60 @@ def explain(
     return LLMResult(candidate, used_model=True)
 
 
+def caregiver_reply(
+    first_name: str, level: int, category: str, link: str
+) -> LLMResult:
+    """A warm, bounded reply to a caregiver's free-form message.
+
+    We intentionally send only a category and the already-decided action to
+    the model, never the caregiver's raw message or clinical details. The
+    model can make the tone human; it cannot invent status or medical advice.
+    """
+    fallback = (
+        f"I hear you, and I know this can feel overwhelming. We are staying with {first_name}. "
+        f"Reply STATUS for the latest update, CALL if you want a nurse to phone, "
+        f"or open the secure details here: {link}."
+    )
+    if not is_enabled():
+        return LLMResult(fallback, used_model=False, fallback_reason="no api key")
+    raw = _chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are a caring, trusted coordinator texting a family caregiver. "
+                    "Validate their feeling first, then give one clear next step. "
+                    "Write two short sentences in warm, casual plain adult language. Do not mention "
+                    "symptoms, medicines, diagnoses, numbers, or facts not supplied. "
+                    "Do not give medical advice. Include the exact secure link and "
+                    "tell them they can reply STATUS, CALL, or HELP."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Family member: {first_name}. Current action level: {level}. "
+                    f"Message category: {category}. Secure link: {link}."
+                ),
+            },
+        ],
+        max_tokens=120,
+    )
+    if not raw:
+        return LLMResult(fallback, used_model=False, fallback_reason="call failed")
+    candidate = raw.strip()
+    from . import caretone
+    if link not in candidate or linq_contains_phi(candidate) or not caretone.lint(candidate, level).ok:
+        return LLMResult(fallback, used_model=False, fallback_reason="caregiver reply rejected")
+    return LLMResult(candidate, used_model=True)
+
+
+def linq_contains_phi(text: str) -> bool:
+    """Local copy of the outbound safety terms to avoid an import cycle."""
+    lowered = text.lower()
+    return any(term in lowered for term in ("diagnos", "chest pain", "confusion", "medication", " mg"))
+
+
 # The action word must survive, in the language we asked for. This is a cheap
 # guard against the model answering in English, or hedging a 911 into a "maybe".
 ACTION_WORDS: dict[int, dict[str, tuple[str, ...]]] = {

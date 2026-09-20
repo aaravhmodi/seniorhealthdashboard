@@ -229,16 +229,16 @@ def reminder_body(first_name: str, kind: str, link: str, language: str = "en") -
     """A short, answerable reminder for the senior, with no clinical detail."""
     prompts = {
         "en": {
-            "meds": "Time for your morning pills. Reply DONE when you have taken them",
-            "appointment": "Your appointment reminder is ready. Reply DONE when you have seen it",
-            "refill": "Your refill reminder is ready. Reply DONE when you have seen it",
-            "weather": "Your weather reminder is ready. Reply DONE when you have seen it",
+            "meds": "Good morning. Just a gentle reminder to take your morning pills. Reply DONE when you have taken them, and I will keep an eye on it",
+            "appointment": "Hi there. Just a friendly reminder about your appointment. Reply DONE when you have seen it, and we will keep things on track",
+            "refill": "Hi there. Your refill reminder is ready. Reply DONE when you have seen it, and we will help you stay on track",
+            "weather": "Good morning. I have a quick weather reminder for you. Reply DONE when you have seen it",
         },
-        "es": {"meds": "Es hora de sus pastillas. Responda LISTO cuando las tome"},
-        "fr": {"meds": "C'est l'heure de vos medicaments. Repondez FAIT quand vous les avez pris"},
-        "pt": {"meds": "Hora dos seus comprimidos. Responda FEITO quando tomar"},
-        "zh": {"meds": "现在是服药时间。服用后回复完成"},
-        "hi": {"meds": "अब दवा लेने का समय है। लेने के बाद DONE लिखें"},
+        "es": {"meds": "Buenos dias. Un recordatorio amable para tomar sus pastillas. Responda LISTO cuando las tome"},
+        "fr": {"meds": "Bonjour. Un petit rappel pour prendre vos medicaments. Repondez FAIT quand vous les avez pris"},
+        "pt": {"meds": "Bom dia. Um lembrete gentil para tomar seus comprimidos. Responda FEITO quando tomar"},
+        "zh": {"meds": "早上好。这是一个温和的服药提醒。服用后回复完成"},
+        "hi": {"meds": "सुप्रभात। यह आपकी दवा लेने का एक सरल याद दिलाना है। लेने के बाद DONE लिखें"},
     }
     text = prompts.get(language, prompts["en"]).get(kind) or prompts["en"][kind]
     return _squeeze(f"{first_name}, {text}. {link}")
@@ -269,9 +269,9 @@ def status_reply_body(first_name: str, level: int, when: str, link: str) -> str:
     """
     reg = REGISTERS[int(level)]
     body = _join(
-        f"{first_name} {reg.status}",
-        f"Last check-in was {when}",
-        reg.ask if int(level) > 1 else "",
+        f"I hear you. {first_name} checked in, and we are keeping an eye on things",
+        f"The last update was {when}",
+        reg.ask if int(level) > 1 else "Reply HELP if you want to talk it through",
     )
     return _squeeze(f"{body} {link}")
 

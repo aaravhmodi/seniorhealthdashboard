@@ -18,7 +18,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import caretone, circle, linq
+from . import caretone, circle, linq, llm
 from .schemas import (
     ActionLevel,
     Alert,
@@ -238,7 +238,7 @@ async def answer_call_request(senior: Senior, chat_id: Optional[str], to: str) -
 
 async def answer_help(senior: Senior, chat_id: Optional[str], to: str) -> bool:
     body = (
-        "Care team here. Text STATUS for how they are doing, CALL to have a "
+        "Hi, I am here with you. Text STATUS for the latest update, CALL to have a "
         "nurse phone you, or tap back on an alert to tell us you have seen it. "
         f"Details: {circle.detail_link(senior.id)}."
     )
@@ -246,6 +246,20 @@ async def answer_help(senior: Senior, chat_id: Optional[str], to: str) -> bool:
         await linq.send_to_chat(chat_id, body) if chat_id
         else await linq.send_direct(to, body)
     )
+    return result.ok
+
+
+async def answer_conversation(
+    senior: Senior, chat_id: Optional[str], to: str, category: str = "caregiver concern"
+) -> bool:
+    """Answer an unrecognized caregiver message with bounded warmth."""
+    evaluation = store.latest_evaluation(senior.id)
+    level = int(evaluation.level) if evaluation else 1
+    result_text = llm.caregiver_reply(
+        senior.display_name.split()[0], level, category, circle.detail_link(senior.id)
+    )
+    result = await (linq.send_to_chat(chat_id, result_text.value) if chat_id
+                    else linq.send_direct(to, result_text.value))
     return result.ok
 
 
@@ -261,6 +275,7 @@ __all__ = [
     "answer_status",
     "answer_call_request",
     "answer_help",
+    "answer_conversation",
     "is_ack_reaction",
     "already_handled",
     "forget_deliveries",
