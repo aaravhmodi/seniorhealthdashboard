@@ -27,6 +27,7 @@ import hmac
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
@@ -138,9 +139,9 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _url(path: str) -> str:
+def _url(path: str, version: str = "v3") -> str:
     base = get_settings().linq_api_base.rstrip("/")
-    return f"{base}/v3/{path.lstrip('/')}"
+    return f"{base}/{version}/{path.lstrip('/')}"
 
 
 def text_parts(body: str) -> list[dict[str, str]]:
@@ -216,7 +217,12 @@ def _parse_success(data: dict[str, Any]) -> LinqResult:
 
 
 async def _request(
-    method: str, path: str, payload: dict[str, Any] | None = None
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    version: str = "v3",
+    extra_headers: Optional[dict[str, str]] = None,
 ) -> LinqResult:
     """One Linq call, retried when -- and only when -- retrying can help.
 
@@ -234,7 +240,10 @@ async def _request(
         try:
             async with httpx.AsyncClient(timeout=settings.linq_timeout_s) as client:
                 resp = await client.request(
-                    method, _url(path), headers=_headers(), json=payload
+                    method,
+                    _url(path, version),
+                    headers={**_headers(), **(extra_headers or {})},
+                    json=payload,
                 )
             if resp.status_code >= 400:
                 last = _parse_error(resp)
@@ -278,6 +287,21 @@ async def _request(
 
 async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
     return await _request("POST", path, payload)
+
+
+async def _post_v1_message(path: str, payload: dict[str, Any]) -> LinqResult:
+    """Send a chat message using Linq's current v1 contract.
+
+    The idempotency key is deliberately generated once outside the retry loop,
+    so a transient retry replays the same send instead of creating a duplicate.
+    """
+    return await _request(
+        "POST",
+        path,
+        payload,
+        version="v1",
+        extra_headers={"Idempotency-Key": str(uuid.uuid4())},
+    )
 
 
 async def _get(path: str) -> dict[str, Any]:
@@ -400,7 +424,10 @@ async def send_to_chat(chat_id: str, body: str) -> LinqResult:
             ok=True, mocked=True, chat_id=chat_id,
             message_id=_mock_id("msg", chat_id, body, str(time.time())),
         )
-    result = await _post(f"chats/{chat_id}/messages", {"message": {"parts": text_parts(body)}})
+    result = await _post_v1_message(
+        f"chats/{chat_id}/messages",
+        {"parts": [{"type": "text", "body": body}], "category": "transactional"},
+    )
     result.chat_id = result.chat_id or chat_id
     return result
 
