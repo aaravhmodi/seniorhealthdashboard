@@ -586,6 +586,7 @@ function Dashboard({
   const languageLoaded = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const messageRef = useRef("");
+  const profileRegistered = useRef(false);
   const guidanceTone = evaluation && (evaluation.level >= 4 ? "emergency" : evaluation.level >= 3 ? "urgent" : evaluation.level === 2 ? "watch" : "calm");
   useEffect(() => {
     const voiceLanguage = (event: Event) =>
@@ -595,9 +596,17 @@ function Dashboard({
         ),
       );
     window.addEventListener("carepath:voice-language", voiceLanguage);
-    void api.checkins(senior.id).then(setCheckins).catch(() => {
-      // The local demo remains usable until FastAPI is running.
-    });
+    void (async () => {
+      try {
+        // The MVP FastAPI store is in-memory, so a server restart loses the
+        // profile. Re-sending this idempotent profile restores that session.
+        await api.createSenior(senior);
+        profileRegistered.current = true;
+        setCheckins(await api.checkins(senior.id));
+      } catch {
+        // The dashboard remains available while the local API is offline.
+      }
+    })();
     return () =>
       window.removeEventListener("carepath:voice-language", voiceLanguage);
   }, [i18n, senior.id]);
@@ -609,6 +618,15 @@ function Dashboard({
   useEffect(() => {
     if (languageLoaded.current) localStorage.setItem(`carepath-language:${senior.id}`, supportedLanguage(i18n.language));
   }, [i18n.language, senior.id]);
+  useEffect(() => {
+    const latest = checkins[0];
+    if (!latest || !evaluation) return;
+    void api.checkin(latest.id, i18n.language)
+      .then((result) => setEvaluation(result.evaluation))
+      .catch(() => {
+        // Keep the last safely generated guidance if the API is offline.
+      });
+  }, [checkins, i18n.language]);
   const updateMessage = (nextMessage: string) => {
     messageRef.current = nextMessage;
     setMessage(nextMessage);
@@ -618,6 +636,10 @@ function Dashboard({
     setSaving(true);
     setError("");
     try {
+      if (!profileRegistered.current) {
+        await api.createSenior(senior);
+        profileRegistered.current = true;
+      }
       const result = await api.createCheckIn({
         senior_id: senior.id,
         text: text.trim(),
@@ -642,7 +664,7 @@ function Dashboard({
     setExpandedCheckin(checkin.id);
     if (checkinDetails[checkin.id]) return;
     try {
-      const detail = await api.checkin(checkin.id);
+      const detail = await api.checkin(checkin.id, i18n.language);
       setCheckinDetails((current) => ({ ...current, [checkin.id]: detail }));
     } catch {
       // Demo history has no backend IDs; the current guidance remains useful.
@@ -799,7 +821,8 @@ function Dashboard({
               </button>
               {expandedCheckin === checkin.id && checkinDetails[checkin.id] && (
                 <div className="history-detail">
-                  <h2>{checkinDetails[checkin.id].evaluation.level_label}</h2>
+                  <h2>{t("suggestedAction")}</h2>
+                  <p className="history-action-level">{checkinDetails[checkin.id].evaluation.level_label}</p>
                   <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
                   <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
                 </div>

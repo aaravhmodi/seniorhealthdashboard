@@ -298,13 +298,23 @@ async def create_checkin(payload: CheckInCreate, _: auth.Principal = Depends(aut
 
 
 @router.get("/checkins/{checkin_id}", response_model=CheckInResponse, tags=["checkins"])
-def get_checkin(checkin_id: str, _: auth.Principal = Depends(auth.require_user)) -> CheckInResponse:
+def get_checkin(
+    checkin_id: str,
+    language: str | None = None,
+    _: auth.Principal = Depends(auth.require_user),
+) -> CheckInResponse:
     checkin = store.checkins.get(checkin_id)
     if not checkin:
         raise HTTPException(status_code=404, detail="unknown check-in")
     evaluation = store.evaluation_for_checkin(checkin_id)
     if not evaluation:
         raise HTTPException(status_code=409, detail="check-in has no evaluation yet")
+    if language:
+        senior = _get_senior(checkin.senior_id)
+        evaluation = evaluate(
+            checkin, senior, store.baseline(senior.id),
+            previous_level=evaluation.previous_level, language=language,
+        )
     return CheckInResponse(checkin=checkin, evaluation=evaluation)
 
 

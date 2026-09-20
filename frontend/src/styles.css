@@ -83,6 +83,7 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .history-record-button { grid-column: 1 / -1; width: 100%; background: transparent; color: inherit; display: grid; grid-template-columns: 160px 185px minmax(0, 1fr); align-items: start; gap: 0 1rem; padding: 0; text-align: left; }
 .history-record-button:hover { background: #fbfdfb; }.history-record-button:focus-visible { outline: 3px solid #8bc7a7; outline-offset: -3px; }
 .history-detail { grid-column: 1 / -1; border-top: 1px solid #e2ebe4; margin-top: 1rem; padding-top: 1rem; color: #355e4e; }.history-detail h2 { font-family: 'DM Sans', sans-serif; font-size: 1.05rem; letter-spacing: 0; margin-bottom: .55rem; }.history-detail p { line-height: 1.5; margin-bottom: .7rem; }.history-detail ul { margin: 0; padding-left: 1.3rem; display: grid; gap: .45rem; font-weight: 600; }
+.history-action-level { color: #276b51; font-weight: 700; }
 @media (max-width: 720px) { .history-record-button { grid-template-columns: 1fr; gap: .3rem; } }
 
 /* Keep a history entry easy to scan: symptom, date, then the note. */

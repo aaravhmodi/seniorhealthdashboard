@@ -21,7 +21,7 @@ export const api = {
   caregiverView: (token: string) => request<CaregiverView>(`/caregiver/${token}`),
   caregiverAck: (token: string) => request<{ acknowledged: boolean }>(`/caregiver/${token}/ack`, { method: 'POST' }),
   checkins: (id: string) => request<CheckIn[]>(`/seniors/${id}/checkins`),
-  checkin: (id: string) => request<CheckInResponse>(`/checkins/${id}`),
+  checkin: (id: string, language: string) => request<CheckInResponse>(`/checkins/${id}?language=${encodeURIComponent(language)}`),
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
 }
