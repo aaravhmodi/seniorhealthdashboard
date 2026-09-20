@@ -200,12 +200,12 @@ def test_demo_reminder_is_sent_to_the_senior_and_done_is_recorded(client):
     assert response.status_code == 200
     assert body["ok"] is True
     assert body["mocked"] is True
-    assert body["recipient"] == "+16175550142"
+    assert set(body["recipients"]) == {"+16175550100", "+16175550142"}
     assert "Reply DONE" in body["body"]
 
     inbound = client.post(
         "/webhooks/linq",
-        json={"thread_id": "", "from_phone_e164": "+16175550142", "text": "DONE"},
+        json={"thread_id": "", "from_phone_e164": "+16175550100", "text": "DONE"},
     )
     assert "reminder_acknowledged" in inbound.json()["actions"]
     assert next(iter(store.reminders.values()))["status"] == "acknowledged"

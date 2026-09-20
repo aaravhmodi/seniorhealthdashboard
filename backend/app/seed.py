@@ -34,6 +34,7 @@ def _senior_rosa() -> Senior:
     """Primary demo patient: Spanish-speaking, polypharmacy, drifting baseline."""
     return Senior(
         id="sen_rosa",
+        phone_e164="+16175550100",
         display_name="Rosa Mendez",
         date_of_birth=date(1947, 3, 14),
         age=79,
@@ -82,6 +83,7 @@ def _senior_chen() -> Senior:
     """Second patient so the clinician dashboard is not a list of one."""
     return Senior(
         id="sen_chen",
+        phone_e164="+16175550101",
         display_name="Wei Chen",
         date_of_birth=date(1941, 11, 2),
         age=84,
@@ -115,6 +117,7 @@ def _senior_walter() -> Senior:
     """English-speaking, steady baseline -- the control case in the demo."""
     return Senior(
         id="sen_walter",
+        phone_e164="+16175550102",
         display_name="Walter Boyd",
         date_of_birth=date(1950, 6, 30),
         age=76,
@@ -142,6 +145,7 @@ def _senior_henriette() -> Senior:
     """French-speaking, lives alone, son checks in from another city."""
     return Senior(
         id="sen_henriette",
+        phone_e164="+16175550103",
         display_name="Henriette Dubois",
         date_of_birth=date(1944, 8, 21),
         age=82,

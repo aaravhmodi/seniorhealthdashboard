@@ -484,7 +484,7 @@ class LinqInbound(BaseModel):
 
 class ReminderRequest(BaseModel):
     senior_id: str
-    kind: Literal["meds", "appointment", "refill", "weather"] = "meds"
+    kind: Literal["meds", "appointment", "refill", "weather", "caregiver_update"] = "meds"
     language: str = "en"
 
 
@@ -493,6 +493,7 @@ class ReminderResponse(BaseModel):
     mocked: bool = False
     kind: str
     recipient: Optional[str] = None
+    recipients: list[str] = []
     message_id: Optional[str] = None
     body: str
     reply_expected: str = "DONE"

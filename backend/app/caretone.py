@@ -233,6 +233,7 @@ def reminder_body(first_name: str, kind: str, link: str, language: str = "en") -
             "appointment": "Hi there. Just a friendly reminder about your appointment. Reply DONE when you have seen it, and we will keep things on track",
             "refill": "Hi there. Your refill reminder is ready. Reply DONE when you have seen it, and we will help you stay on track",
             "weather": "Good morning. I have a quick weather reminder for you. Reply DONE when you have seen it",
+            "caregiver_update": "Hi there. Your care team has a quick update for you. Reply DONE when you have seen it, and we will keep you posted",
         },
         "es": {"meds": "Buenos dias. Un recordatorio amable para tomar sus pastillas. Responda LISTO cuando las tome"},
         "fr": {"meds": "Bonjour. Un petit rappel pour prendre vos medicaments. Repondez FAIT quand vous les avez pris"},

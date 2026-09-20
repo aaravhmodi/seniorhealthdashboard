@@ -28,7 +28,7 @@ export interface HandoffPacket {
   medications: Medication[]; allergies: string[]; conditions: string[];
   recent_checkins: CheckIn[]; disclaimer: string;
 }
-export interface ReminderResponse { ok: boolean; mocked: boolean; kind: string; recipient?: string; message_id?: string; body: string; reply_expected: string; error?: string }
+export interface ReminderResponse { ok: boolean; mocked: boolean; kind: string; recipient?: string; recipients?: string[]; message_id?: string; body: string; reply_expected: string; error?: string }
 
 // -- Caregiver view (opened from the link in a Linq text) -------------------
 export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }

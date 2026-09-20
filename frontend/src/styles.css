@@ -58,6 +58,10 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .reminder-card { margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: #fff; border: 1px solid #e2e9e2; border-radius: 14px; padding: 1.25rem 1.5rem; }
 .reminder-card h2 { margin: .2rem 0 .3rem; font-size: 1.15rem; }
 .reminder-card .eyebrow { margin: 0; color: #287156; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.reminder-preview { margin-top: .8rem; color: #287156; }
+.handoff-summary { margin-top: 1rem; padding: 1rem; border-left: 4px solid #287156; background: #f0f7f2; border-radius: 8px; }
+.handoff-summary h3 { margin: 0 0 .45rem; font-size: 1rem; }
+.handoff-summary p { margin: .35rem 0; }
 .reminder-actions { display: flex; align-items: center; gap: .65rem; flex-shrink: 0; }
 .reminder-actions select { border: 1px solid #cbd9d1; border-radius: 9px; padding: .7rem .8rem; background: #fff; }
 .form-success { color: #286e55; font-size: .85rem; margin: .7rem 0 0; }

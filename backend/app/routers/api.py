@@ -875,24 +875,29 @@ async def send_reminder(
     senior = _get_senior(payload.senior_id)
     caregivers = circle.escalation_chain(senior, ActionLevel.CALL_CLINIC)
     recipient = caregivers[0] if caregivers else None
-    recipient_phone = senior.phone_e164 or (recipient.phone_e164 if recipient else None)
-    if not recipient_phone:
+    recipient_numbers = list(dict.fromkeys(
+        [number for number in [senior.phone_e164, recipient.phone_e164 if recipient else None] if number]
+    ))
+    if not recipient_numbers:
         raise HTTPException(status_code=409, detail="no senior or caregiver phone is enrolled")
     body = caretone.reminder_body(
         senior.display_name.split()[0], payload.kind, circle.detail_link(senior.id), payload.language
     )
     circle_state = store.circles.get(senior.id)
-    result = await linq.send_direct(recipient_phone, body)
-    if result.message_id:
-        store.reminders[result.message_id] = {
-            "senior_id": senior.id, "kind": payload.kind, "recipient": recipient_phone,
-            "status": "sent" if result.ok else "failed", "body": body,
-        }
+    results = [await linq.send_direct(number, body) for number in recipient_numbers]
+    result = next((item for item in results if item.ok), results[0])
+    for number, delivery in zip(recipient_numbers, results):
+        if delivery.message_id:
+            store.reminders[delivery.message_id] = {
+                "senior_id": senior.id, "kind": payload.kind, "recipient": number,
+                "status": "sent" if delivery.ok else "failed", "body": body,
+            }
     return ReminderResponse(
-        ok=result.ok,
+        ok=all(item.ok for item in results),
         mocked=result.mocked,
         kind=payload.kind,
-        recipient=recipient_phone,
+        recipient=recipient_numbers[0],
+        recipients=recipient_numbers,
         message_id=result.message_id,
         body=body,
         error=result.error,

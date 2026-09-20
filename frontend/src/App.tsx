@@ -14,7 +14,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -30,6 +30,15 @@ type SpeechRecognitionLike = {
   onerror: ((event: { error: string }) => void) | null;
 };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+function speakText(text: string, language: string) {
+  if (!("speechSynthesis" in window)) return false;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = language === "zh" ? "zh-CN" : language === "pt" ? "pt-BR" : language === "hi" ? "hi-IN" : language === "es" ? "es-ES" : language === "fr" ? "fr-FR" : "en-US";
+  utterance.rate = 0.9;
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
 const splitList = (value: FormDataEntryValue | null) =>
   String(value || "")
     .split(",")
@@ -645,6 +654,8 @@ function Dashboard({
   const [reminderStatus, setReminderStatus] = useState("");
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
   const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
+  const [handoffDetails, setHandoffDetails] = useState<Record<string, HandoffPacket>>({});
+  const [speaking, setSpeaking] = useState(false);
   const languageLoaded = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const messageRef = useRef("");
@@ -771,7 +782,8 @@ function Dashboard({
     setReminderStatus("");
     try {
       const result = await api.sendReminder(senior.id, reminderKind, i18n.language);
-      setReminderStatus(result.ok ? `${result.mocked ? "Demo message queued" : "Message sent"} to ${result.recipient || "the care circle"}. Reply DONE is expected.` : (result.error || "Message was not sent."));
+      const recipients = result.recipients?.length ? ` to ${result.recipients.length} phones (senior + caregiver)` : ` to ${result.recipient || "the care circle"}`;
+      setReminderStatus(result.ok ? `${result.mocked ? "Demo message queued" : "Message sent"}${recipients}. Reply DONE is expected.` : (result.error || "Message was not sent."));
     } catch (reason) {
       setReminderStatus(reason instanceof Error ? reason.message : "Message was not sent.");
     } finally {
@@ -788,6 +800,10 @@ function Dashboard({
     try {
       const detail = await api.checkin(checkin.id, i18n.language);
       setCheckinDetails((current) => ({ ...current, [checkin.id]: detail }));
+      if (detail.evaluation.level >= 3) {
+        const packet = await api.handoff(senior.id);
+        setHandoffDetails((current) => ({ ...current, [checkin.id]: packet }));
+      }
     } catch {
       // Demo history has no backend IDs; the current guidance remains useful.
       if (evaluation) setCheckinDetails((current) => ({ ...current, [checkin.id]: { checkin, evaluation } }));
@@ -922,8 +938,8 @@ function Dashboard({
           <section className="reminder-card">
             <div>
               <p className="eyebrow">Linq family messaging</p>
-              <h2>Send an answerable reminder</h2>
-              <p className="helper-text">The demo sends through the local Docker mock. A real Linq key sends to the enrolled caregiver.</p>
+              <h2>Text + read-aloud reminders</h2>
+              <p className="helper-text">Medication, appointment, refill, weather, and caregiver updates are texted to the senior and the first consented caregiver. The local demo uses Docker mock delivery.</p>
             </div>
             <div className="reminder-actions">
               <select value={reminderKind} onChange={(event) => setReminderKind(event.target.value)} aria-label="Reminder type">
@@ -931,12 +947,17 @@ function Dashboard({
                 <option value="appointment">Appointment</option>
                 <option value="refill">Refill</option>
                 <option value="weather">Weather</option>
+                <option value="caregiver_update">Caregiver update</option>
               </select>
               <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder}>
                 {sendingReminder ? "Sending..." : "Send to phone"}
               </button>
             </div>
             {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
+            <button className="text-button reminder-preview" type="button" onClick={() => {
+              const text = reminderKind === "meds" ? "Good morning. Just a gentle reminder to take your morning pills. Reply DONE when you have taken them." : reminderKind === "appointment" ? "Hi there. Just a friendly reminder about your appointment. Reply DONE when you have seen it." : reminderKind === "refill" ? "Hi there. Your refill reminder is ready. Reply DONE when you have seen it." : reminderKind === "caregiver_update" ? "Hi there. Your care team has a quick update for you. Reply DONE when you have seen it." : "Good morning. I have a quick weather reminder for you. Reply DONE when you have seen it.";
+              if (!speakText(text, i18n.language)) setReminderStatus("Read-aloud is not available in this browser.");
+            }}>🔊 Read this reminder aloud</button>
           </section>
           {evaluation && <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
             <div className="guidance-content">
@@ -948,6 +969,11 @@ function Dashboard({
                   {evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}
                 </ul>
               )}
+              <button className="text-button" type="button" onClick={() => {
+                setSpeaking(true);
+                if (!speakText(evaluation.explanation, i18n.language)) setError("Read-aloud is not available in this browser.");
+                window.setTimeout(() => setSpeaking(false), Math.max(1200, evaluation.explanation.length * 45));
+              }}>{speaking ? "Speaking…" : "🔊 Read guidance aloud"}</button>
               {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? "Preparing handoff..." : "Download nurse handoff PDF"}</button>}
             </div>
           </section>}
@@ -982,6 +1008,13 @@ function Dashboard({
                   <p className="history-action-level">{checkinDetails[checkin.id].evaluation.level_label}</p>
                   <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
                   <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
+                  {checkinDetails[checkin.id].evaluation.level >= 3 && handoffDetails[checkin.id] && (
+                    <div className="handoff-summary">
+                      <h3>AI provider handoff summary</h3>
+                      <p>{handoffDetails[checkin.id].patient_summary_en}</p>
+                      <p className="muted">This summary is generated from the reported check-in and is for clinician review.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </article>
