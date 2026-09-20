@@ -5,11 +5,14 @@ goes home with instructions, and then nobody hears from them again until the
 next visit. Roughly a fifth of Medicare patients are back within thirty days,
 and the window where that is still preventable is the first three days.
 
-So: an ED-level evaluation schedules two check-ins, at 24 and 72 hours. Each
-one asks the senior how they are, runs the answer through the same ladder as
-any other check-in, and compares it against their own baseline. Worse than
-baseline is the signal -- not "is this bad", which we cannot answer, but "is
-this worse than this person's normal", which we can.
+So: an ED-level evaluation schedules a check-in at 24 hours. It asks the senior
+how they are, runs the answer through the same ladder as any other check-in,
+and compares it against their own baseline. Worse than baseline is the signal
+-- not "is this bad", which we cannot answer, but "is this worse than this
+person's normal", which we can.
+
+The cadence is `FOLLOWUP_HOURS`, a list, and the code does not care how long it
+is. It ships as `[24]`.
 
 **Teach-back** rides along with the 24-hour check. We ask the senior to say
 their discharge instructions back in their own words, transcribe it, and check
@@ -20,8 +23,8 @@ instruction failing, because after an ED visit, at eighty, on four medicines,
 it usually did.
 
 On stage nobody waits a day. `FOLLOWUP_TIME_SCALE` divides every interval, so
-`FOLLOWUP_TIME_SCALE=2880` puts the 24-hour check thirty seconds out and the
-72-hour check ninety seconds out, through exactly the same code path.
+`FOLLOWUP_TIME_SCALE=2880` puts the 24-hour check thirty seconds out, through
+exactly the same code path.
 """
 from __future__ import annotations
 
@@ -207,10 +210,10 @@ async def _alert_teach_back_miss(senior: Senior) -> bool:
 def schedule_after_discharge(
     senior: Senior, evaluation: Evaluation
 ) -> list[FollowUpJob]:
-    """Queue the 24h and 72h checks after an ED-level evaluation.
+    """Queue the post-discharge check(s) after an ED-level evaluation.
 
     Re-evaluating at ED level while jobs are already pending does not stack a
-    second pair; the family does not need four texts for one episode.
+    second set; the family does not need two texts for one episode.
     """
     pending = [
         j for j in store.followups.values()
@@ -226,9 +229,9 @@ def schedule_after_discharge(
         job = FollowUpJob(
             id=new_id("fup"),
             senior_id=senior.id,
-            # The first check carries the teach-back; the later one is a plain
-            # "how are you now", because by 72 hours the instructions are
-            # either in the routine or they are not.
+            # A check within the first day carries the teach-back, while the
+            # instructions are still something the senior is trying to follow
+            # rather than something they have already settled into or lost.
             kind="teachback" if hours <= 24 else "checkin",
             due_at=now() + timedelta(hours=hours / scale),
             hours_after=hours,
@@ -304,7 +307,7 @@ def record_followup_answer(
 ) -> Optional[FollowUpJob]:
     """Tie a check-in back to the follow-up it was answering.
 
-    `worsened` is the whole point of the 24/72-hour cadence: not whether the
+    `worsened` is the whole point of the follow-up: not whether the
     level is high, but whether it is higher than this person's own trailing
     mean. Someone who lives at level 2 sitting at level 2 is fine. Someone who
     lives at level 1 sitting at level 2 is the call we want to have made.

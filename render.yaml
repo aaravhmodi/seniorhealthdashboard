@@ -34,8 +34,9 @@ services:
         value: "+14158598194"
 
       # -- Demo timing ---------------------------------------------------
-      # Real cadence is 24h and 72h. 2880 puts the 24-hour follow-up thirty
-      # seconds out, through the same code path, so it can be shown on stage.
+      # One follow-up, at 24 hours, carrying the teach-back. 2880 puts it
+      # thirty seconds out, through the same code path, so it can be shown on
+      # stage. FOLLOWUP_HOURS='[24, 72]' adds a later check if you want one.
       - key: FOLLOWUP_TIME_SCALE
         value: "2880"
       - key: ESCALATION_TIMEOUT_MINUTES

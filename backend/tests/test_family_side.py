@@ -357,18 +357,46 @@ def test_stop_withdraws_consent_in_the_thread(client):
 # --------------------------------------------------------------------------
 # Follow-up and teach-back
 # --------------------------------------------------------------------------
-def test_an_ed_level_checkin_schedules_24h_and_72h(client):
+def test_an_ed_level_checkin_schedules_the_configured_follow_up(client):
+    """The cadence is FOLLOWUP_HOURS and the code does not care how long it
+    is; it ships as [24], which is the check that carries the teach-back."""
     client.post("/checkins", json={"senior_id": "sen_rosa", "text": "Me falta el aire y tengo nausea, y estoy sudando frio.", "language": "es", "source": "text"})
     jobs = client.get("/seniors/sen_rosa/followups").json()
-    assert [j["hours_after"] for j in jobs] == [24.0, 72.0]
+    assert [j["hours_after"] for j in jobs] == get_settings().followup_hours
+    assert jobs[0]["hours_after"] == 24.0
     assert jobs[0]["kind"] == "teachback"
-    assert jobs[1]["kind"] == "checkin"
 
 
-def test_a_second_ed_evaluation_does_not_stack_a_second_pair(client):
+def test_only_one_follow_up_ships_by_default(client):
+    """The 72-hour check was cut: it bought nothing the 24-hour check does
+    not, and it depended on state surviving three days in a process that does
+    not. FOLLOWUP_HOURS brings it back without a code change."""
+    assert get_settings().followup_hours == [24.0]
+    client.post("/checkins", json={"senior_id": "sen_rosa", "text": "Me falta el aire y tengo nausea, y estoy sudando frio.", "language": "es", "source": "text"})
+    jobs = client.get("/seniors/sen_rosa/followups").json()
+    assert len(jobs) == 1
+    assert jobs[0]["kind"] == "teachback"
+
+
+def test_a_longer_cadence_still_works_if_configured(client, monkeypatch):
+    """Nothing about the cut is hard-coded; the mechanism stayed generic."""
+    monkeypatch.setenv("FOLLOWUP_HOURS", "[24, 72]")
+    get_settings.cache_clear()
+    try:
+        client.post("/checkins", json={"senior_id": "sen_chen", "text": "I fell in the bathroom this morning and hit my head.", "language": "en", "source": "text"})
+        jobs = client.get("/seniors/sen_chen/followups").json()
+        assert [j["hours_after"] for j in jobs] == [24.0, 72.0]
+        assert [j["kind"] for j in jobs] == ["teachback", "checkin"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_second_ed_evaluation_does_not_stack_another_set(client):
+    """The family does not need two texts for one episode."""
+    expected = len(get_settings().followup_hours)
     for _ in range(2):
         client.post("/checkins", json={"senior_id": "sen_rosa", "text": "Me falta el aire y tengo nausea, y estoy sudando frio.", "language": "es", "source": "text"})
-    assert len(client.get("/seniors/sen_rosa/followups").json()) == 2
+    assert len(client.get("/seniors/sen_rosa/followups").json()) == expected
 
 
 def test_the_clock_can_be_advanced_for_the_demo(client):
@@ -381,7 +409,7 @@ def test_the_clock_can_be_advanced_for_the_demo(client):
         store.followups[job.id] = job
 
     result = client.post("/demo/tick").json()
-    assert len(result["followups_sent"]) == 2
+    assert len(result["followups_sent"]) == len(get_settings().followup_hours)
     assert all(j["status"] == "sent" for j in client.get("/seniors/sen_rosa/followups").json())
 
 
@@ -395,7 +423,7 @@ def test_a_due_job_is_only_ever_claimed_once(client):
 
     first = followup.claim_due()
     second = followup.claim_due()
-    assert len(first) == 2
+    assert len(first) == len(get_settings().followup_hours)
     assert second == []
 
 
@@ -407,7 +435,7 @@ def test_a_claim_that_never_completed_is_retried(client):
         job.status = "sending"
         store.followups[job.id] = job
 
-    assert len(followup.claim_due()) == 2
+    assert len(followup.claim_due()) == len(get_settings().followup_hours)
 
 
 def test_teach_back_passes_when_the_plan_comes_back(client):

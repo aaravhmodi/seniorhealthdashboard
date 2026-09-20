@@ -42,7 +42,12 @@ class Settings(BaseSettings):
     # so every interval is divided by this. Set FOLLOWUP_TIME_SCALE=2880 and a
     # 24-hour follow-up lands in 30 seconds.
     followup_time_scale: float = 1.0
-    followup_hours: list[float] = [24.0, 72.0]
+    # One follow-up, at 24 hours, which is the one that carries the teach-back
+    # and the one worth watching. A 72-hour check was here too; it was cut
+    # because it bought nothing the 24-hour check does not, and it depended on
+    # state surviving three days in a process that does not. Set
+    # FOLLOWUP_HOURS='[24, 72]' to bring it back -- nothing else needs changing.
+    followup_hours: list[float] = [24.0]
     # How long a caregiver has to tapback an alert before the next caregiver
     # in the escalation order is texted.
     escalation_timeout_minutes: float = 10.0

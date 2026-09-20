@@ -211,7 +211,7 @@ def escalation_body(first_name: str, missed_name: str, link: str) -> str:
 
 
 def followup_body(first_name: str, hours: int, link: str) -> str:
-    """The 24h and 72h post-discharge nudge, sent to the circle.
+    """The post-discharge nudge, sent to the circle.
 
     Framed as a scheduled thing, not an alarm, so the family does not read a
     routine check as a new emergency.
