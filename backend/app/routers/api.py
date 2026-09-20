@@ -45,6 +45,8 @@ from ..schemas import (
     Health,
     LinqInbound,
     Medication,
+    ReminderRequest,
+    ReminderResponse,
     Senior,
     SeniorAnswer,
     SeniorQuestion,
@@ -766,6 +768,32 @@ async def linq_webhook(
         if open_alerts:
             circle.acknowledge(open_alerts[0], caregiver, via="text", detail=payload.text)
             actions.append("acknowledged")
+        else:
+            reminder = next(
+                (item for item in store.reminders.values()
+                 if item.get("senior_id") == senior.id
+                 and item.get("recipient") == payload.from_phone_e164
+                 and item.get("status") == "sent"),
+                None,
+            )
+            if reminder:
+                reminder["status"] = "acknowledged"
+                reminder["ack_text"] = payload.text
+                reminder["ack_at"] = (payload.received_at or now()).isoformat()
+                actions.append("reminder_acknowledged")
+    elif intent == "ack":
+        reminder = next(
+            (item for item in store.reminders.values()
+             if item.get("senior_id") == senior.id
+             and item.get("recipient") == payload.from_phone_e164
+             and item.get("status") == "sent"),
+            None,
+        )
+        if reminder:
+            reminder["status"] = "acknowledged"
+            reminder["ack_text"] = payload.text
+            reminder["ack_at"] = (payload.received_at or now()).isoformat()
+            actions.append("reminder_acknowledged")
     elif intent == "status":
         # "Where is Dad?" -- the most-used feature on the family side.
         if await linq_events.answer_status(senior, chat_id, payload.from_phone_e164):
@@ -831,6 +859,43 @@ async def linq_status() -> dict:
     }
 
 
+@router.post("/reminders/send", response_model=ReminderResponse, tags=["demo"])
+async def send_reminder(
+    payload: ReminderRequest, _: auth.Principal = Depends(auth.require_user)
+) -> ReminderResponse:
+    """Send an answerable reminder through the local mock or Linq transport.
+
+    The local Docker demo uses Linq's deterministic mock path; production uses
+    the configured API key. The body never contains diagnoses or medication
+    names, and always tells the recipient how to answer.
+    """
+    senior = _get_senior(payload.senior_id)
+    caregivers = circle.escalation_chain(senior, ActionLevel.CALL_CLINIC)
+    recipient = caregivers[0] if caregivers else None
+    recipient_phone = senior.phone_e164 or (recipient.phone_e164 if recipient else None)
+    if not recipient_phone:
+        raise HTTPException(status_code=409, detail="no senior or caregiver phone is enrolled")
+    body = caretone.reminder_body(
+        senior.display_name.split()[0], payload.kind, circle.detail_link(senior.id), payload.language
+    )
+    circle_state = store.circles.get(senior.id)
+    result = await linq.send_direct(recipient_phone, body)
+    if result.message_id:
+        store.reminders[result.message_id] = {
+            "senior_id": senior.id, "kind": payload.kind, "recipient": recipient_phone,
+            "status": "sent" if result.ok else "failed", "body": body,
+        }
+    return ReminderResponse(
+        ok=result.ok,
+        mocked=result.mocked,
+        kind=payload.kind,
+        recipient=recipient_phone,
+        message_id=result.message_id,
+        body=body,
+        error=result.error,
+    )
+
+
 @router.post("/demo/reset", tags=["demo"])
 async def demo_reset() -> Health:
     store.seniors.clear()
@@ -843,6 +908,7 @@ async def demo_reset() -> Health:
     store.followups.clear()
     store.care_plans.clear()
     store.teachbacks.clear()
+    store.reminders.clear()
     # A reset that leaves yesterday's rows in Postgres is not a reset: the
     # next boot would hydrate them straight back.
     await persistence.wipe()

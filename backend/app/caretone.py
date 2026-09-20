@@ -131,7 +131,7 @@ BUREAUCRATIC: tuple[tuple[str, str], ...] = (
 ACK_WORDS: tuple[str, ...] = (
     "ok", "okay", "k", "got it", "gotit", "seen", "ack", "yes", "yep", "yeah",
     "on it", "onit", "thanks", "thank you", "will do", "heading", "on my way",
-    "omw", "understood", "entendido", "vale", "si", "compris", "oui",
+    "omw", "understood", "done", "listo", "fait", "feito", "completado", "entendido", "vale", "si", "compris", "oui",
 )
 
 # What the caregiver can text at us, and what it means. Matched loosely,
@@ -223,6 +223,25 @@ def followup_body(first_name: str, hours: int, link: str) -> str:
         "You will hear from us either way",
     )
     return _squeeze(f"{body} Follow along here: {link}")
+
+
+def reminder_body(first_name: str, kind: str, link: str, language: str = "en") -> str:
+    """A short, answerable reminder for the senior, with no clinical detail."""
+    prompts = {
+        "en": {
+            "meds": "Time for your morning pills. Reply DONE when you have taken them",
+            "appointment": "Your appointment reminder is ready. Reply DONE when you have seen it",
+            "refill": "Your refill reminder is ready. Reply DONE when you have seen it",
+            "weather": "Your weather reminder is ready. Reply DONE when you have seen it",
+        },
+        "es": {"meds": "Es hora de sus pastillas. Responda LISTO cuando las tome"},
+        "fr": {"meds": "C'est l'heure de vos medicaments. Repondez FAIT quand vous les avez pris"},
+        "pt": {"meds": "Hora dos seus comprimidos. Responda FEITO quando tomar"},
+        "zh": {"meds": "现在是服药时间。服用后回复完成"},
+        "hi": {"meds": "अब दवा लेने का समय है। लेने के बाद DONE लिखें"},
+    }
+    text = prompts.get(language, prompts["en"]).get(kind) or prompts["en"][kind]
+    return _squeeze(f"{first_name}, {text}. {link}")
 
 
 def teachback_miss_body(first_name: str, link: str) -> str:

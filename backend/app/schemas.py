@@ -482,6 +482,23 @@ class LinqInbound(BaseModel):
     event: Optional[str] = None       # "message.received", "reaction.added", ...
 
 
+class ReminderRequest(BaseModel):
+    senior_id: str
+    kind: Literal["meds", "appointment", "refill", "weather"] = "meds"
+    language: str = "en"
+
+
+class ReminderResponse(BaseModel):
+    ok: bool
+    mocked: bool = False
+    kind: str
+    recipient: Optional[str] = None
+    message_id: Optional[str] = None
+    body: str
+    reply_expected: str = "DONE"
+    error: Optional[str] = None
+
+
 class Health(BaseModel):
     status: Literal["ok"] = "ok"
     contract_version: str = CONTRACT_VERSION

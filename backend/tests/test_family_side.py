@@ -191,6 +191,26 @@ def test_enrolling_numbers_opens_one_group_chat(client):
     assert roles.count("caregiver") == 2
 
 
+def test_demo_reminder_is_sent_to_the_senior_and_done_is_recorded(client):
+    response = client.post(
+        "/reminders/send",
+        json={"senior_id": "sen_rosa", "kind": "meds", "language": "en"},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["ok"] is True
+    assert body["mocked"] is True
+    assert body["recipient"] == "+16175550142"
+    assert "Reply DONE" in body["body"]
+
+    inbound = client.post(
+        "/webhooks/linq",
+        json={"thread_id": "", "from_phone_e164": "+16175550142", "text": "DONE"},
+    )
+    assert "reminder_acknowledged" in inbound.json()["actions"]
+    assert next(iter(store.reminders.values()))["status"] == "acknowledged"
+
+
 def test_enrolling_the_same_number_twice_does_not_double_the_texts(client):
     _enroll(client)
     first = len(client.get("/seniors/sen_rosa").json()["caregivers"])

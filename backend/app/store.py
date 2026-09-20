@@ -103,6 +103,9 @@ class Store:
         self.followups: dict[str, FollowUpJob] = PersistedDict("followups")
         self.care_plans: dict[str, CarePlan] = PersistedDict("care_plans")
         self.teachbacks: dict[str, list[TeachBackResult]] = defaultdict(list)
+        # Local Linq demo reminders. Production can move these rows to the
+        # same persistence table without changing the webhook contract.
+        self.reminders: dict[str, dict] = PersistedDict("reminders")
 
     # -- seniors ----------------------------------------------------------
     def put_senior(self, senior: Senior) -> Senior:

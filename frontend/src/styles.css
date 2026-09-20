@@ -55,6 +55,13 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .conversation-turns .senior-turn { background: #f3f5f3; color: #435d51; }
 .secondary-button { margin-top: 1rem; display: inline-flex; align-items: center; gap: .5rem; border: 1px solid #2d7658; color: #286e55; background: #fff; border-radius: 9px; padding: .7rem .9rem; font-weight: 700; }
 .secondary-button:disabled { opacity: .6; cursor: wait; }
+.reminder-card { margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: #fff; border: 1px solid #e2e9e2; border-radius: 14px; padding: 1.25rem 1.5rem; }
+.reminder-card h2 { margin: .2rem 0 .3rem; font-size: 1.15rem; }
+.reminder-card .eyebrow { margin: 0; color: #287156; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.reminder-actions { display: flex; align-items: center; gap: .65rem; flex-shrink: 0; }
+.reminder-actions select { border: 1px solid #cbd9d1; border-radius: 9px; padding: .7rem .8rem; background: #fff; }
+.form-success { color: #286e55; font-size: .85rem; margin: .7rem 0 0; }
+@media (max-width: 720px) { .reminder-card { align-items: stretch; flex-direction: column; }.reminder-actions { flex-direction: column; align-items: stretch; }.reminder-actions select, .reminder-actions .secondary-button { width: 100%; justify-content: center; } }
 .profile-modal { width: min(94vw, 1020px); max-height: 88vh; }.profile-header { padding: .25rem 0 1.35rem; border-bottom: 1px solid #dfe9e2; }.profile-header h2 { margin-bottom: .3rem; }.profile-header p { color: #5d766b; margin: 0; font-size: 1rem; }.profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 2.25rem; }.profile-grid .profile-section { margin-top: 1.35rem; }.profile-grid .profile-section:last-child:nth-child(odd) { grid-column: 1 / -1; }
 @media (max-width: 720px) { .profile-modal { width: min(96vw, 600px); }.profile-grid { grid-template-columns: 1fr; gap: 0; } }
 

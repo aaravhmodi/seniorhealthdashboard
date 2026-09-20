@@ -640,6 +640,9 @@ function Dashboard({
   const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
   const [conversationTurns, setConversationTurns] = useState<ConversationTurn[]>([]);
   const [downloadingHandoff, setDownloadingHandoff] = useState(false);
+  const [reminderKind, setReminderKind] = useState("meds");
+  const [sendingReminder, setSendingReminder] = useState(false);
+  const [reminderStatus, setReminderStatus] = useState("");
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
   const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
   const languageLoaded = useRef(false);
@@ -761,6 +764,18 @@ function Dashboard({
       setError(`The nurse handoff could not be downloaded${reason instanceof Error ? `: ${reason.message}` : "."}`);
     } finally {
       setDownloadingHandoff(false);
+    }
+  };
+  const sendReminder = async () => {
+    setSendingReminder(true);
+    setReminderStatus("");
+    try {
+      const result = await api.sendReminder(senior.id, reminderKind, i18n.language);
+      setReminderStatus(result.ok ? `${result.mocked ? "Demo message queued" : "Message sent"} to ${result.recipient || "the care circle"}. Reply DONE is expected.` : (result.error || "Message was not sent."));
+    } catch (reason) {
+      setReminderStatus(reason instanceof Error ? reason.message : "Message was not sent.");
+    } finally {
+      setSendingReminder(false);
     }
   };
   const openCheckin = async (checkin: CheckIn) => {
@@ -904,6 +919,25 @@ function Dashboard({
               </div>
             </section>
           )}
+          <section className="reminder-card">
+            <div>
+              <p className="eyebrow">Linq family messaging</p>
+              <h2>Send an answerable reminder</h2>
+              <p className="helper-text">The demo sends through the local Docker mock. A real Linq key sends to the enrolled caregiver.</p>
+            </div>
+            <div className="reminder-actions">
+              <select value={reminderKind} onChange={(event) => setReminderKind(event.target.value)} aria-label="Reminder type">
+                <option value="meds">Morning pills</option>
+                <option value="appointment">Appointment</option>
+                <option value="refill">Refill</option>
+                <option value="weather">Weather</option>
+              </select>
+              <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder}>
+                {sendingReminder ? "Sending..." : "Send to phone"}
+              </button>
+            </div>
+            {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
+          </section>
           {evaluation && <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
             <div className="guidance-content">
               <p className="guidance-level">{evaluation.level_label}</p>
