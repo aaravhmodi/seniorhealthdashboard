@@ -30,12 +30,15 @@ Five things everyone gets wrong with FAERS, and what we do about them:
    The UI must say "reported more often with", never "causes". Our card text
    does.
 
-What we build, all restricted to primary-suspect drugs on reports from adults
-65+ where an age is given:
+What we build, from reports on adults 65+ where an age is given. Everything
+is primary-suspect only EXCEPT the interaction tables, which need the whole
+medicine list by definition -- see REGIMEN_ROLES for why that is safe here:
 
     faers_ingredients    the ingredient dictionary, built FROM the data
     faers_signals        ingredient x event: ROR, PRR, shrunk EB estimate, CI
-    faers_pair_signals   two ingredients co-reported with the same event
+    faers_regimen_all    every medicine on the report, whatever its role
+    faers_pair_signals   two ingredients reported with the same event more
+                         often than either drug's own rate would predict
 
 Usage:
     python -m app.datasets.cli faers data/raw/faers/2024q1 data/raw/faers/2024q2
@@ -92,6 +95,17 @@ QUARTER_FILES = ("DEMO", "DRUG", "REAC")
 # a signal out of nothing.
 SUSPECT_ROLES = ("PS",)
 
+# ...but an INTERACTION cannot be seen in the primary suspect alone. A report
+# names one PS drug, so a table built from PS only has exactly one medicine per
+# case and "which two drugs appear together" has no rows to find -- which is
+# why faers_pair_signals was silently empty rather than wrong.
+#
+# So the regimen is loaded separately: every medicine on the report, whatever
+# role it was given. It answers a different question from faers_signals and is
+# never mixed into it. A pair signal is a prompt to have a pharmacist look, not
+# a claim that either drug caused anything.
+REGIMEN_ROLES = ("PS", "SS", "C", "I")
+
 # Gamma-Poisson prior for the shrunk estimate. alpha=beta=0.5 is weak: it pulls
 # a cell with a handful of reports most of the way back to 1, and barely moves
 # one with thousands. Stated here rather than buried so it can be argued with.
@@ -143,13 +157,26 @@ def _quarter_tables(con, folder: pathlib.Path) -> None:
 
 
 def load(
-    folders: list[str], min_reports: int = 20, pair_top_k: int = 150
+    folders: list[str],
+    min_reports: int = 20,
+    pair_top_k: int = 150,
+    pair_min_reports: int = 50,
 ) -> dict[str, int]:
+    """Build the FAERS tables.
+
+    `pair_min_reports` is deliberately higher than `min_reports`: a two-drug
+    cell is thinner than a one-drug cell at the same count, and the pair table
+    is the one confounding hits hardest.
+    """
     con = connect()
     try:
         con.execute("CREATE OR REPLACE TABLE faers_demo_all (caseid VARCHAR, primaryid VARCHAR, fda_dt VARCHAR, age_years DOUBLE)")
         con.execute(
             "CREATE OR REPLACE TABLE faers_drug_all "
+            "(primaryid VARCHAR, drug_seq VARCHAR, ingredient VARCHAR, role_cod VARCHAR)"
+        )
+        con.execute(
+            "CREATE OR REPLACE TABLE faers_regimen_all "
             "(primaryid VARCHAR, drug_seq VARCHAR, ingredient VARCHAR, role_cod VARCHAR)"
         )
         con.execute("CREATE OR REPLACE TABLE faers_reac_all (primaryid VARCHAR, event VARCHAR)")
@@ -177,6 +204,20 @@ def load(
                 """
             )
             roles = "', '".join(SUSPECT_ROLES)
+            regimen_roles = "', '".join(REGIMEN_ROLES)
+            con.execute(
+                f"""
+                INSERT INTO faers_regimen_all
+                SELECT primaryid,
+                       drug_seq,
+                       lower(trim(split_part(prod_ai, '\\', 1))) AS ingredient,
+                       upper(trim(role_cod)) AS role_cod
+                FROM drug_raw
+                WHERE prod_ai IS NOT NULL
+                  AND trim(prod_ai) <> ''
+                  AND upper(trim(role_cod)) IN ('{regimen_roles}')
+                """
+            )
             con.execute(
                 f"""
                 INSERT INTO faers_drug_all
@@ -311,37 +352,138 @@ def load(
             """
         )
 
-        # Pair signals: the interaction story. All pairs is combinatorial, so we
-        # limit to the ingredients that actually appear often in senior reports
-        # -- which is where the compute earns its keep rather than burning on
-        # pairs nobody takes.
+        # -- Interactions ------------------------------------------------
+        # Built on the REGIMEN (every medicine on the report), because the
+        # primary-suspect table has one drug per case and cannot show a pair.
+        #
+        # `suspect` marks whether this medicine was implicated on this report
+        # rather than merely listed. A pair where NEITHER drug was implicated
+        # is two things an old person happens to take, and it is most of what
+        # a naive co-occurrence count finds.
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE faers_regimen_pairs AS
+            SELECT c.primaryid,
+                   d.ingredient,
+                   r.event,
+                   max(CASE WHEN d.role_cod IN ('PS', 'SS', 'I') THEN 1 ELSE 0 END)
+                       AS suspect
+            FROM faers_cases c
+            JOIN faers_regimen_all d USING (primaryid)
+            JOIN faers_reac_all r USING (primaryid)
+            GROUP BY c.primaryid, d.ingredient, r.event
+            """
+        )
+
+        # All pairs is combinatorial, so limit to the ingredients that actually
+        # appear often in senior reports -- which is where the compute earns
+        # its keep rather than burning on pairs nobody takes.
         top_k = [
             row[0] for row in con.execute(
-                f"SELECT ingredient FROM faers_ingredients "
-                f"WHERE senior_reports >= {min_reports} "
-                f"ORDER BY senior_reports DESC LIMIT {pair_top_k}"
+                f"SELECT ingredient, count(DISTINCT primaryid) AS n "
+                f"FROM faers_regimen_pairs GROUP BY 1 "
+                f"HAVING count(DISTINCT primaryid) >= {min_reports} "
+                f"ORDER BY n DESC LIMIT {pair_top_k}"
             ).fetchall()
         ]
-        tracked = "', '".join(top_k) if top_k else "__none__"
+        tracked = "', '".join(x.replace("'", "''") for x in top_k) if top_k else "__none__"
+
+        # The measure. For drugs A and B and event E we ask: is E reported with
+        # the PAIR more often than you would expect from each drug's own
+        # reporting rate for E?
+        #
+        #   expected = n_AB * (1 - (1 - p_A)(1 - p_B))
+        #
+        # where p_A is the share of A's reports mentioning E. That baseline is
+        # a noisy-OR: what you would see if the two drugs contributed
+        # independently and neither changed the other. It is deliberately more
+        # generous than a multiplicative baseline, so a pair has to clear a
+        # higher bar before we call it an interaction.
+        #
+        # The ratio is shrunk with the same Gamma-Poisson prior as the
+        # single-drug table -- one shrinkage story for the whole file, not two
+        # -- and carries a lower credibility bound so a thin cell cannot be
+        # quoted on its point estimate alone.
+        #
+        # Read the result as hypothesis-generating and nothing more. These
+        # counts are confounded by indication in a way the single-drug table is
+        # not: patients on two pulmonary drugs are breathless because of their
+        # lungs, not because of the combination. `lookup.drug_pair_signal`
+        # gates on the lower bound, and the card it feeds asks for a pharmacist
+        # review rather than claiming a cause.
         con.execute(
             f"""
             CREATE OR REPLACE TABLE faers_pair_signals AS
-            WITH co AS (
+            WITH drug_totals AS (
+                SELECT ingredient, count(DISTINCT primaryid) AS drug_reports
+                FROM faers_regimen_pairs GROUP BY ingredient
+            ),
+            drug_event AS (
+                SELECT ingredient, event, count(DISTINCT primaryid) AS de_reports
+                FROM faers_regimen_pairs GROUP BY ingredient, event
+            ),
+            co_any AS (
                 SELECT
                     least(p1.ingredient, p2.ingredient)    AS ingredient_a,
                     greatest(p1.ingredient, p2.ingredient) AS ingredient_b,
-                    p1.event,
+                    count(DISTINCT p1.primaryid)           AS pair_reports
+                FROM faers_regimen_pairs p1
+                JOIN faers_regimen_pairs p2
+                  ON p1.primaryid = p2.primaryid
+                 AND p1.ingredient < p2.ingredient
+                WHERE p1.ingredient IN ('{tracked}')
+                  AND p2.ingredient IN ('{tracked}')
+                GROUP BY 1, 2
+            ),
+            co_event AS (
+                SELECT
+                    least(p1.ingredient, p2.ingredient)    AS ingredient_a,
+                    greatest(p1.ingredient, p2.ingredient) AS ingredient_b,
+                    p1.event                               AS event,
                     count(DISTINCT p1.primaryid)           AS n
-                FROM faers_pairs p1
-                JOIN faers_pairs p2
+                FROM faers_regimen_pairs p1
+                JOIN faers_regimen_pairs p2
                   ON p1.primaryid = p2.primaryid
                  AND p1.event = p2.event
                  AND p1.ingredient < p2.ingredient
                 WHERE p1.ingredient IN ('{tracked}')
                   AND p2.ingredient IN ('{tracked}')
+                  -- At least one of the two was implicated, not just listed.
+                  AND (p1.suspect = 1 OR p2.suspect = 1)
                 GROUP BY 1, 2, 3
+            ),
+            rates AS (
+                SELECT
+                    e.ingredient_a, e.ingredient_b, e.event, e.n,
+                    a.pair_reports,
+                    dea.de_reports::DOUBLE / nullif(dta.drug_reports, 0) AS p_a,
+                    deb.de_reports::DOUBLE / nullif(dtb.drug_reports, 0) AS p_b
+                FROM co_event e
+                JOIN co_any a USING (ingredient_a, ingredient_b)
+                JOIN drug_event dea
+                  ON dea.ingredient = e.ingredient_a AND dea.event = e.event
+                JOIN drug_event deb
+                  ON deb.ingredient = e.ingredient_b AND deb.event = e.event
+                JOIN drug_totals dta ON dta.ingredient = e.ingredient_a
+                JOIN drug_totals dtb ON dtb.ingredient = e.ingredient_b
+            ),
+            scored AS (
+                SELECT
+                    ingredient_a, ingredient_b, event, n, pair_reports,
+                    pair_reports * (1 - (1 - p_a) * (1 - p_b)) AS expected
+                FROM rates
             )
-            SELECT * FROM co WHERE n >= {min_reports}
+            SELECT
+                ingredient_a, ingredient_b, event, n, pair_reports, expected,
+                (n + {PRIOR_ALPHA}) / nullif(expected + {PRIOR_BETA}, 0) AS eb_ratio,
+                -- Lower 2.5% bound on the posterior, log-normal approximation:
+                -- the standard error of log(ratio) is about 1/sqrt(n + alpha).
+                ((n + {PRIOR_ALPHA}) / nullif(expected + {PRIOR_BETA}, 0))
+                    * exp(-1.96 / sqrt(n + {PRIOR_ALPHA}))               AS ci_low,
+                ((n + {PRIOR_ALPHA}) / nullif(expected + {PRIOR_BETA}, 0))
+                    * exp(1.96 / sqrt(n + {PRIOR_ALPHA}))                AS ci_high
+            FROM scored
+            WHERE n >= {pair_min_reports}
             """
         )
 

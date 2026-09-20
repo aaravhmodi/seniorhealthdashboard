@@ -135,6 +135,29 @@ class _Ctx:
             out.append(f"blood sugar {v.glucose_mgdl}")
         return out
 
+    def med_pairs(self, event: str) -> list[tuple[str, str, dict]]:
+        """Pairs on this patient's own list reported together with `event`.
+
+        Returned for display only. FAERS pair counts are confounded by what the
+        medicines are FOR -- two lung drugs look like they cause breathlessness
+        because the patient has lung disease -- so this names the combination
+        and asks for a pharmacist, and never multiplies anything.
+        """
+        resolved = []
+        for med in self.senior.medications:
+            spoken = med.ingredient or med.name
+            resolved.append((med.name, lookup.resolve_ingredient(spoken) or spoken.lower()))
+
+        found = []
+        for i, (name_a, ing_a) in enumerate(resolved):
+            for name_b, ing_b in resolved[i + 1:]:
+                if ing_a == ing_b:
+                    continue
+                signal = lookup.drug_pair_signal(ing_a, ing_b, event)
+                if signal and signal["significant"]:
+                    found.append((name_a, name_b, signal))
+        return found
+
     def med_signal(self, event: str):
         """Strongest FAERS signal between a medicine on the list and `event`."""
         best = None
@@ -295,6 +318,14 @@ def _medication_trigger(ctx: _Ctx) -> list[str]:
         best = ctx.med_signal(label)
         if best:
             hits.append(f"you take {best[0]} and reported {label}")
+        # A pair can raise the concern even when neither drug does on its own,
+        # which is the whole reason interactions are worth looking for.
+        for name_a, name_b, signal in ctx.med_pairs(label):
+            hits.append(
+                f"you take {name_a} and {name_b} together, which are reported "
+                f"with {label} {signal['eb_ratio']:.1f}x more than either alone "
+                f"predicts"
+            )
     return hits
 
 
@@ -512,7 +543,9 @@ CONCERNS: tuple[Concern, ...] = (
         code="medication_effect",
         label="One of your medicines causing this",
         plain="The most fixable thing on this list. A pharmacist can often sort "
-              "it out the same day.",
+              "it out the same day. Where two medicines are named together, "
+              "that is a prompt to have the combination reviewed, not a finding "
+              "that the pair caused this.",
         trigger=_medication_trigger,
         base_symptom=None,
         fallback_base=0.22,

@@ -240,19 +240,32 @@ def faers_cards(checkin: CheckIn, senior: Senior) -> list[EvidenceCard]:
                 continue
             for label in sorted(labels):
                 real_pair = lookup.drug_pair_signal(a, b, label)
-                if real_pair:
+                if real_pair and real_pair["significant"]:
                     cards.append(
                         EvidenceCard(
                             kind=EvidenceKind.FAERS,
-                            title=f"{a.title()} + {b.title()} together",
+                            title=f"{a.title()} and {b.title()} together",
                             detail=(
-                                f"{real_pair['n']:,} reports mention both medicines "
-                                f"alongside {label}. Worth a pharmacist call."
+                                f"Among reports listing both medicines, {label} "
+                                f"appears {real_pair['n']:,} times against "
+                                f"{real_pair['expected']:.0f} expected from each "
+                                f"drug's own reporting rate ({real_pair['eb_ratio']:.1f}x, "
+                                f"95% CI {real_pair['ci_low']:.1f}-"
+                                f"{real_pair['ci_high']:.1f}). Reports like these are "
+                                f"strongly shaped by what the medicines are FOR, so "
+                                f"read it as a reason to have a pharmacist look at the "
+                                f"combination -- not as evidence the pair caused this."
                             ),
-                            stat=Stat(value=float(real_pair["n"]), unit="count",
-                                      n=real_pair["n"]),
+                            stat=Stat(value=real_pair["eb_ratio"], unit="ratio",
+                                      n=real_pair["n"],
+                                      ci_low=real_pair["ci_low"],
+                                      ci_high=real_pair["ci_high"]),
                             source=real_pair["source"],
-                            weight=0.5,
+                            # Zero on purpose. A pair signal is confounded by
+                            # indication in a way the single-drug table is not,
+                            # so it earns a card and a pharmacist call -- never a
+                            # rung on the ladder.
+                            weight=0.0,
                         )
                     )
 

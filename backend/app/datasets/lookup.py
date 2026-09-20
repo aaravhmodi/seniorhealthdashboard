@@ -190,22 +190,52 @@ def resolve_ingredient(spoken: str) -> str | None:
     return None
 
 
+# What it takes to call a pair an interaction rather than a coincidence. The
+# shrunk ratio has to clear this AFTER the noisy-OR baseline has already
+# accounted for both drugs' own reporting rates for the event -- so 1.5 here is
+# "half again as often as the two drugs together would explain", not "half
+# again as often as nothing".
+MIN_PAIR_RATIO = 1.5
+
+
 @lru_cache(maxsize=512)
 def drug_pair_signal(ingredient_a: str, ingredient_b: str, event: str) -> dict | None:
+    """FAERS: is this event reported with the PAIR more than each drug predicts?
+
+    Distinct from `drug_event_signal`, which asks about one drug against the
+    rest of the database. This asks whether two medicines together are reported
+    with the event more often than their individual rates would produce -- the
+    question a pharmacist is actually being asked to look at.
+    """
     a, b = sorted([ingredient_a.lower(), ingredient_b.lower()])
     rows = _query(
         """
-        SELECT n FROM faers_pair_signals
+        SELECT n, pair_reports, expected, eb_ratio, ci_low, ci_high
+        FROM faers_pair_signals
         WHERE ingredient_a = ? AND ingredient_b = ? AND event = ?
         """,
         [a, b, event.lower()],
     )
     if not rows:
         return None
+    n, pair_reports, expected, eb_ratio, ci_low, ci_high = rows[0]
+    if eb_ratio is None:
+        return None
     return {
-        "n": int(rows[0][0]),
+        "n": int(n),
+        "pair_reports": int(pair_reports),
+        "expected": round(float(expected), 1),
+        "eb_ratio": round(float(eb_ratio), 2),
+        "ci_low": round(float(ci_low), 2),
+        "ci_high": round(float(ci_high), 2),
+        # The LOWER bound has to clear the bar, not the point estimate: a pair
+        # seen fifty times with a wide interval has not earned a card.
+        "significant": bool(float(ci_low) >= MIN_PAIR_RATIO),
         "pair": [a, b],
-        "source": "FAERS co-reported pair, ages 65+",
+        "source": (
+            "FAERS reports listing both medicines, ages 65+, de-duplicated by "
+            "CASEID; compared against each drug's own reporting rate"
+        ),
     }
 
 

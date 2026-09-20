@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.datasets import faers, lookup, neiss, nhamcs, warehouse
 from app.datasets import model as outcome_model
 from app.main import app
-from app.schemas import CheckIn, CheckInSource, Symptom
+from app.schemas import CheckIn, CheckInSource, Medication, Senior, Symptom
 from app.store import now, store
 
 duckdb = pytest.importorskip("duckdb")
@@ -439,6 +439,140 @@ def test_faers_computes_a_shrunk_signal(warehouse_at, tmp_path):
     assert signal["expected"] is not None
     assert signal["significant"] is True
     assert "primary-suspect" in signal["source"]
+
+
+def ss(pid, name, ai, seq=2):
+    """A secondary-suspect drug row. Implicated, but not the headline."""
+    return (pid, seq, "SS", name, ai)
+
+
+def _pair_quarter(tmp_path, pair_event, pair_other, solo_other):
+    """Build a quarter where A and B are only reported with `Dizziness`
+    together, and each on its own is reported with something else.
+
+    That separation is the whole point of the measure. If each drug were
+    already reported with dizziness on its own, the noisy-OR baseline would
+    explain the pair's count and the ratio would correctly come out flat --
+    co-occurrence is not an interaction.
+    """
+    demo, drug, reac = [], [], []
+    counter = [1000]
+
+    def case(rows, event):
+        counter[0] += 1
+        key = str(counter[0])
+        demo.append((key, key, "20240101", "80"))
+        drug.extend(rows(key))
+        reac.append((key, event))
+
+    both = lambda k: [ps(k, "DRUGA", "INGREDIENT A"), ss(k, "DRUGB", "INGREDIENT B")]
+    for _ in range(pair_event):
+        case(both, "Dizziness")
+    for _ in range(pair_other):
+        case(both, "Nausea")
+    for _ in range(solo_other):
+        case(lambda k: [ps(k, "DRUGA", "INGREDIENT A")], "Nausea")
+    for _ in range(solo_other):
+        case(lambda k: [ps(k, "DRUGB", "INGREDIENT B")], "Nausea")
+    return write_faers_quarter(tmp_path, demo, drug, reac)
+
+
+def test_a_pair_needs_more_than_one_suspect_drug_to_exist_at_all(warehouse_at, tmp_path):
+    """The bug this replaced: faers_drug_all is primary-suspect only, so every
+    case had exactly one drug and the pair self-join could never match. The
+    table was empty for structural reasons, not because nothing was there."""
+    path = _pair_quarter(tmp_path, pair_event=80, pair_other=20, solo_other=400)
+    faers.load([path], min_reports=5, pair_min_reports=10)
+
+    signal = lookup.drug_pair_signal("ingredient a", "ingredient b", "dizziness")
+    assert signal is not None, "the pair table is empty again"
+    assert signal["n"] == 80
+
+
+def test_a_pair_is_measured_against_each_drugs_own_rate(warehouse_at, tmp_path):
+    """The point of the measure: co-occurrence alone is not an interaction.
+
+    Both drugs are reported with dizziness on their own, so a large part of the
+    pair's dizziness count is explained before the pair is considered at all.
+    """
+    path = _pair_quarter(tmp_path, pair_event=80, pair_other=20, solo_other=400)
+    faers.load([path], min_reports=5, pair_min_reports=10)
+
+    signal = lookup.drug_pair_signal("ingredient a", "ingredient b", "dizziness")
+    assert signal["expected"] > 0, "expected count was never computed"
+    assert signal["expected"] < signal["n"], "this pair should look elevated"
+    assert signal["ci_low"] < signal["eb_ratio"] < signal["ci_high"]
+
+
+def test_co_occurrence_alone_is_not_an_interaction(warehouse_at, tmp_path):
+    """Both drugs are reported with dizziness on their own. The pair's count is
+    then exactly what each drug already predicts, so the ratio must stay flat
+    and no card is offered. This is the test that stops the measure degrading
+    into "these two were mentioned together a lot"."""
+    demo, drug, reac = [], [], []
+    counter = [3000]
+
+    def case(rows, event):
+        counter[0] += 1
+        key = str(counter[0])
+        demo.append((key, key, "20240101", "80"))
+        drug.extend(rows(key))
+        reac.append((key, event))
+
+    both = lambda k: [ps(k, "DRUGA", "INGREDIENT A"), ss(k, "DRUGB", "INGREDIENT B")]
+    for _ in range(60):
+        case(both, "Dizziness")
+    for _ in range(100):
+        case(lambda k: [ps(k, "DRUGA", "INGREDIENT A")], "Dizziness")
+    for _ in range(100):
+        case(lambda k: [ps(k, "DRUGB", "INGREDIENT B")], "Dizziness")
+
+    faers.load([write_faers_quarter(tmp_path, demo, drug, reac)],
+               min_reports=5, pair_min_reports=10)
+
+    signal = lookup.drug_pair_signal("ingredient a", "ingredient b", "dizziness")
+    assert signal is not None, "the cell should exist, just not be a signal"
+    assert not signal["significant"], (
+        f"co-occurrence was read as an interaction (ratio {signal['eb_ratio']})"
+    )
+
+
+def test_two_concomitants_alone_do_not_make_an_interaction(warehouse_at, tmp_path):
+    """A pair where neither drug was implicated is two things an old person
+    happens to take. That is most of what a naive co-occurrence count finds."""
+    demo, drug, reac = [], [], []
+    for i in range(80):
+        pid = str(7000 + i)
+        demo.append((pid, pid, "20240101", "80"))
+        drug.append(ps(pid, "SOMETHINGELSE", "UNRELATED INGREDIENT", seq=1))
+        drug.append(concomitant(pid, "DRUGA", "INGREDIENT A", seq=2))
+        drug.append(concomitant(pid, "DRUGB", "INGREDIENT B", seq=3))
+        reac.append((pid, "Dizziness"))
+    faers.load([write_faers_quarter(tmp_path, demo, drug, reac)],
+               min_reports=5, pair_min_reports=10)
+
+    assert lookup.drug_pair_signal("ingredient a", "ingredient b", "dizziness") is None
+
+
+def test_a_pair_signal_never_moves_the_action_ladder(warehouse_at, tmp_path):
+    """FAERS pair counts are confounded by indication -- patients on two lung
+    drugs are breathless because of their lungs. The card is a prompt to call a
+    pharmacist, so it carries zero weight and cannot escalate anyone."""
+    path = _pair_quarter(tmp_path, pair_event=80, pair_other=20, solo_other=400)
+    faers.load([path], min_reports=5, pair_min_reports=10)
+
+    senior = Senior(
+        id="sen_pair", display_name="Pair Test", date_of_birth="1945-01-01", age=80,
+        medications=[
+            Medication(id="m1", name="DrugA", ingredient="ingredient a"),
+            Medication(id="m2", name="DrugB", ingredient="ingredient b"),
+        ],
+    )
+    cards = evidence.faers_cards(probe(["dizziness"]), senior)
+    pair_cards = [c for c in cards if " and " in c.title]
+    assert pair_cards, "the pair card did not render"
+    assert all(c.weight == 0.0 for c in pair_cards)
+    assert "not as evidence the pair caused this" in pair_cards[0].detail
 
 
 def test_shrinkage_pulls_a_thin_cell_back_toward_no_signal(warehouse_at, tmp_path):
