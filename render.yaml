@@ -1,5 +1,9 @@
 # One-click deploy on Render: New > Blueprint > point at this repo.
 # Free tier sleeps after ~15 min idle; hit /healthz before the demo to wake it.
+#
+# Secrets are `sync: false`, which means Render prompts for them once and keeps
+# them in the dashboard. This repo is public -- a key committed here is a key
+# published, and rotating afterwards does not un-publish it.
 services:
   - type: web
     name: senior-checkin-api
@@ -9,10 +13,34 @@ services:
     plan: free
     healthCheckPath: /healthz
     envVars:
+      # false makes the Linq sends, Deepgram calls and LLM calls real. Leave it
+      # true and the family side silently "succeeds" without texting anyone.
       - key: MOCK_MODE
-        value: "true"
+        value: "false"
       - key: PUBLIC_WEB_BASE
         value: https://senior-checkin.vercel.app
+      # Where Linq delivers tapbacks and replies. The app registers its own
+      # webhook subscription on boot using this, so it has to be the public
+      # origin of THIS service.
+      - key: PUBLIC_API_BASE
+        value: https://senior-checkin-api.onrender.com
+
+      # -- Linq (iMessage/RCS/SMS channel) ------------------------------
+      # Three separate Linq APIs exist; a key is valid for exactly one. This
+      # is the iMessage one.
+      - key: LINQ_API_BASE
+        value: https://api.linqapp.com/api/partner
+      - key: LINQ_FROM_NUMBER
+        value: "+14158598194"
+
+      # -- Demo timing ---------------------------------------------------
+      # Real cadence is 24h and 72h. 2880 puts the 24-hour follow-up thirty
+      # seconds out, through the same code path, so it can be shown on stage.
+      - key: FOLLOWUP_TIME_SCALE
+        value: "2880"
+      - key: ESCALATION_TIMEOUT_MINUTES
+        value: "10"
+
       # Set these in the Render dashboard, not here. Never commit a key.
       - key: DEEPGRAM_API_KEY
         sync: false
@@ -20,5 +48,10 @@ services:
         sync: false
       - key: LINQ_API_KEY
         sync: false
+      # Linq returns this (whsec_...) when the webhook subscription is created.
       - key: LINQ_WEBHOOK_SECRET
+        sync: false
+      # Optional: a care-team line added to every circle, so the family is not
+      # texting a thread with nobody behind it.
+      - key: LINQ_CARE_TEAM_NUMBER
         sync: false
