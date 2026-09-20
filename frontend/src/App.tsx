@@ -230,7 +230,7 @@ function Login({
       <section className="login-copy">
         <Brand />
         <div className="login-message">
-          <h1>Health support, made simple.</h1>
+          <h1>{t("healthSupport")}</h1>
         </div>
       </section>
       <section className="login-panel">
@@ -598,7 +598,7 @@ function Profile({
         <button
           className="icon-button close"
           onClick={onClose}
-          aria-label="Close"
+          aria-label={t("close")}
         >
           <X />
         </button>
@@ -635,22 +635,22 @@ function Profile({
             };
             setSaving(true);
             setSaveError("");
-            void onSave(updated).then(() => setEditing(false)).catch(() => setSaveError("We could not save those changes. Please try again.")).finally(() => setSaving(false));
+            void onSave(updated).then(() => setEditing(false)).catch(() => setSaveError(t("couldNotSave"))).finally(() => setSaving(false));
           }}>
             <div className="form-grid">
               <Field id="name" label={t("fullName")} required defaultValue={senior.display_name} />
               <Field id="phone" label={t("phone")} type="tel" required defaultValue={senior.phone_e164} />
               <div><label htmlFor="profile-gender">{t("gender")}</label><select className="form-select" id="profile-gender" name="gender" defaultValue={senior.gender || ""}><option value="">{t("genderOptional")}</option><option>{t("woman")}</option><option>{t("man")}</option><option>{t("nonBinary")}</option><option>{t("selfDescribe")}</option></select></div>
-              <div><Field id="conditions" label={t("conditions")} defaultValue={senior.conditions.join(", ")} /><p className="field-help">Separate items with commas.</p></div>
-              <div className="full"><Field id="allergies" label={t("allergies")} defaultValue={senior.allergies.join(", ")} /><p className="field-help">Separate items with commas.</p></div>
-              <div className="full medication-editor"><div className="medication-heading"><h3>{t("medications")}</h3><button className="add-medication" type="button" onClick={() => setEditableMedications((current) => [...current, { id: crypto.randomUUID(), name: "", dose: "", schedule: "" }])}>{t("add")}</button></div>{editableMedications.map((medication, index) => <fieldset className="medication-entry" key={medication.id}><legend>{t("medications")} {index + 1}</legend><div className="form-grid"><div><label htmlFor={`edit-med-name-${medication.id}`}>{t("medicineName")}</label><input id={`edit-med-name-${medication.id}`} value={medication.name} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, name: event.target.value } : item))} /></div><div><label htmlFor={`edit-med-dose-${medication.id}`}>{t("dose")}</label><input id={`edit-med-dose-${medication.id}`} value={medication.dose || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, dose: event.target.value } : item))} /></div><div className="full"><label htmlFor={`edit-med-schedule-${medication.id}`}>{t("schedule")}</label><input id={`edit-med-schedule-${medication.id}`} value={medication.schedule || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, schedule: event.target.value } : item))} /></div></div>{editableMedications.length > 1 && <button className="remove-medication" type="button" onClick={() => setEditableMedications((current) => current.filter((item) => item.id !== medication.id))}>Remove</button>}</fieldset>)}</div>
+              <div><Field id="conditions" label={t("conditions")} defaultValue={senior.conditions.join(", ")} /><p className="field-help">{t("separateWithCommas")}</p></div>
+              <div className="full"><Field id="allergies" label={t("allergies")} defaultValue={senior.allergies.join(", ")} /><p className="field-help">{t("separateWithCommas")}</p></div>
+              <div className="full medication-editor"><div className="medication-heading"><h3>{t("medications")}</h3><button className="add-medication" type="button" onClick={() => setEditableMedications((current) => [...current, { id: crypto.randomUUID(), name: "", dose: "", schedule: "" }])}>{t("add")}</button></div>{editableMedications.map((medication, index) => <fieldset className="medication-entry" key={medication.id}><legend>{t("medications")} {index + 1}</legend><div className="form-grid"><div><label htmlFor={`edit-med-name-${medication.id}`}>{t("medicineName")}</label><input id={`edit-med-name-${medication.id}`} value={medication.name} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, name: event.target.value } : item))} /></div><div><label htmlFor={`edit-med-dose-${medication.id}`}>{t("dose")}</label><input id={`edit-med-dose-${medication.id}`} value={medication.dose || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, dose: event.target.value } : item))} /></div><div className="full"><label htmlFor={`edit-med-schedule-${medication.id}`}>{t("schedule")}</label><input id={`edit-med-schedule-${medication.id}`} value={medication.schedule || ""} onChange={(event) => setEditableMedications((current) => current.map((item) => item.id === medication.id ? { ...item, schedule: event.target.value } : item))} /></div></div>{editableMedications.length > 1 && <button className="remove-medication" type="button" onClick={() => setEditableMedications((current) => current.filter((item) => item.id !== medication.id))}>{t("remove")}</button>}</fieldset>)}</div>
               <div className="full"><h3>{t("emergencyCaregiver")}</h3></div>
               <Field id="contact-name" label={t("fullName")} defaultValue={contact?.name || ""} />
               <Field id="relationship" label={t("relationship")} defaultValue={contact?.relationship || ""} />
               <div className="full"><Field id="contact-phone" label={t("phone")} type="tel" defaultValue={contact?.phone_e164 || ""} /></div>
             </div>
             {saveError && <p className="form-error" role="alert">{saveError}</p>}
-            <button className="primary-button" disabled={saving}>{saving ? "Saving…" : t("saveChanges")}</button>
+            <button className="primary-button" disabled={saving}>{saving ? t("saving") : t("saveChanges")}</button>
           </form>
         ) : (
         <div className="profile-grid">
@@ -1367,7 +1367,7 @@ function Dashboard({
               )}
               <button className="text-button" type="button" onClick={() => {
                 setSpeaking(true);
-                if (!speakText(evaluation.explanation, i18n.language)) setError("Read-aloud is not available in this browser.");
+                if (!speakText(evaluation.explanation, i18n.language)) setError(t("readAloudUnavailable"));
                 window.setTimeout(() => setSpeaking(false), Math.max(1200, evaluation.explanation.length * 45));
               }}>{speaking ? t("speaking") : `🔊 ${t("readGuidance")}`}</button>
               <button className="secondary-button" type="button" onClick={() => void shareConversation()} disabled={sharingConversation || !checkins[0]}>
@@ -1429,7 +1429,7 @@ function Dashboard({
               <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || (reminderKind === "meds" && !senior.medications.length)}>
                 {sendingReminder ? t("sending") : t("sendText")}
               </button>
-              <label className="sr-only" htmlFor="reminder-at">Reminder date and time</label>
+              <label className="sr-only" htmlFor="reminder-at">{t("reminderDateTime")}</label>
               <input id="reminder-at" type="datetime-local" value={reminderAt} min={new Date(Date.now() + 60000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)} onChange={(event) => setReminderAt(event.target.value)} />
               <button className="primary-button" type="button" onClick={() => void scheduleReminder()} disabled={sendingReminder || !reminderAt || (reminderKind === "meds" && !senior.medications.length)}>
                 {sendingReminder ? t("scheduling") : t("scheduleReminder")}
@@ -1471,9 +1471,9 @@ function Dashboard({
                   <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
                   {checkinDetails[checkin.id].evaluation.level >= 3 && handoffDetails[checkin.id] && (
                     <div className="handoff-summary">
-                      <h3>AI provider handoff summary</h3>
+                      <h3>{t("providerHandoffSummary")}</h3>
                       <p>{handoffDetails[checkin.id].patient_summary_en}</p>
-                      <p className="muted">This summary is generated from the reported check-in and is for clinician review.</p>
+                      <p className="muted">{t("providerHandoffDescription")}</p>
                     </div>
                   )}
                 </div>
