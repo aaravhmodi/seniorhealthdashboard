@@ -85,6 +85,16 @@ def list_seniors() -> list[Senior]:
     return store.list_seniors()
 
 
+@router.post("/seniors", response_model=Senior, status_code=201, tags=["seniors"])
+def create_senior(senior: Senior) -> Senior:
+    """Create a patient profile after a user completes onboarding."""
+    existing = store.get_senior(senior.id)
+    if existing:
+        # Signup retries are safe, e.g. if a prior browser request timed out.
+        return existing
+    return store.put_senior(senior)
+
+
 @router.get("/seniors/{senior_id}", response_model=Senior, tags=["seniors"])
 def get_senior(senior_id: str) -> Senior:
     return _get_senior(senior_id)

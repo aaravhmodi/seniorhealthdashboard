@@ -11,6 +11,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  createSenior: (senior: Senior) => request<Senior>('/seniors', { method: 'POST', body: JSON.stringify(senior) }),
   senior: (id: string) => request<Senior>(`/seniors/${id}`),
   // The caregiver view, opened from the link in a Linq text. Everything the
   // SMS deliberately left out lives behind these three calls.

@@ -62,6 +62,7 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 /* Profile setup shows one calm, focused step at a time. */
 .signup-progress { margin: 1.6rem 0 -1rem; color: #557367; font-size: 1rem; }
 .signup-progress strong { color: #234b3d; }
+.form-success { color: #235f47; background: #eaf5ed; border: 1px solid #bddbc7; border-radius: 10px; padding: .9rem 1rem; line-height: 1.45; }
 .profile-form section[hidden] { display: none; }
 .signup-actions { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: .35rem; }
 .signup-actions .secondary-button { margin: 0; min-width: 116px; }

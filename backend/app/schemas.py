@@ -95,6 +95,8 @@ class Senior(BaseModel):
     date_of_birth: date
     age: int
     preferred_language: str = "en"        # BCP-47-ish: en, es, zh, pt, hi...
+    gender: Optional[str] = None
+    phone_e164: Optional[str] = None
     voice_output_supported: bool = True   # Deepgram TTS covers ~7 languages
     conditions: list[str] = []
     allergies: list[str] = []

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { demoCarePlan, demoCheckins, demoEvaluation, demoSenior } from "./mock";
 import { api } from "./api";
+import { supabase, supabaseConfigured } from "./supabase";
 import type { CarePlan, CheckIn, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
@@ -99,17 +100,16 @@ function Login({
   onSignIn,
   onCreate,
 }: {
-  onSignIn: (credentials: Credentials) => boolean;
+  onSignIn: (credentials: Credentials) => Promise<boolean>;
   onCreate: () => void;
 }) {
   const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!onSignIn({ email, password }))
-      setError("Please check your email and password.");
+    if (!(await onSignIn({ email, password }))) setError(t("signInFailed"));
   }
   return (
     <main className="login-page">
@@ -151,12 +151,15 @@ function Signup({
   onSave,
 }: {
   onBack: () => void;
-  onSave: (senior: Senior, plan: CarePlan, credentials: Credentials) => void;
+  onSave: (senior: Senior, plan: CarePlan, credentials: Credentials) => Promise<"signed-in" | "confirm-email" | "profile-pending">;
 }) {
   const { t, i18n } = useTranslation();
   const [medicationCount, setMedicationCount] = useState(1);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const steps = [t("account"), t("about"), t("healthInfo"), t("plan"), t("emergency")];
 
   function moveTo(nextStep: number) {
@@ -165,27 +168,45 @@ function Signup({
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  function validateStep(stepToValidate: number, form: FormData) {
+    if (stepToValidate === 0) {
+      const email = String(form.get("account-email") || "");
+      const password = String(form.get("account-password") || "");
+      if (!email || password.length < 8) {
+        setError(t("accountRequired"));
+        return false;
+      }
+      if (password !== String(form.get("confirm-password") || "")) {
+        setError(t("passwordMismatch"));
+        return false;
+      }
+    }
+    if (stepToValidate === 1 && (!form.get("name") || !form.get("birthday") || !form.get("phone"))) {
+      setError(t("aboutRequired"));
+      return false;
+    }
+    if (stepToValidate === 4 && (!form.get("contact-name") || !form.get("relationship") || !form.get("contact-phone"))) {
+      setError(t("contactRequired"));
+      return false;
+    }
+    return true;
+  }
+
+  function continueToNext() {
+    if (formRef.current && validateStep(step, new FormData(formRef.current))) moveTo(step + 1);
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    for (let index = 0; index < steps.length; index += 1) {
+      if (!validateStep(index, form)) {
+        setStep(index);
+        return;
+      }
+    }
     const email = String(form.get("account-email"));
     const password = String(form.get("account-password"));
-    if (!email || password.length < 8) {
-      setStep(0);
-      return setError("Please enter an email address and a password with at least 8 characters.");
-    }
-    if (password !== String(form.get("confirm-password"))) {
-      setStep(0);
-      return setError("Passwords do not match.");
-    }
-    if (!form.get("name") || !form.get("birthday") || !form.get("phone")) {
-      setStep(1);
-      return setError("Please add your name, date of birth, and mobile phone number.");
-    }
-    if (!form.get("contact-name") || !form.get("relationship") || !form.get("contact-phone")) {
-      setStep(4);
-      return setError("Please add an emergency contact name, relationship, and phone number.");
-    }
     const birthday = String(form.get("birthday"));
     const medications = Array.from({ length: medicationCount }, (_, index) => ({
       name: String(form.get(`medicine-${index}`) || ""),
@@ -231,7 +252,22 @@ function Signup({
           ]
         : [],
     };
-    onSave(senior, plan, { email, password });
+    setSaving(true);
+    setError("");
+    try {
+      const result = await onSave(senior, plan, { email, password });
+      if (result === "confirm-email") setSuccess(t("confirmationSent"));
+      if (result === "profile-pending") setSuccess(t("accountCreatedProfilePending"));
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : "";
+      if (detail.toLowerCase().includes("email rate limit")) {
+        setError(t("emailRateLimited"));
+      } else {
+        setError(detail ? `${t("signUpFailed")} ${detail}` : t("signUpFailed"));
+      }
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <main className="onboarding-page">
@@ -244,7 +280,7 @@ function Signup({
       <section className="onboarding-content">
         <LanguagePicker />
         <h1>{t("setup")}</h1>
-        <form className="profile-form" onSubmit={submit}>
+        <form className="profile-form" onSubmit={submit} ref={formRef}>
           <p className="signup-progress" aria-live="polite">
             {t("step", { current: step + 1, total: steps.length })}: <strong>{steps[step]}</strong>
           </p>
@@ -371,21 +407,22 @@ function Signup({
               {error}
             </p>
           )}
+          {success && <p className="form-success" role="status">{success}</p>}
           <div className="signup-actions">
             <button
               type="button"
               className="secondary-button big-button"
-              onClick={() => (step === 0 ? onBack() : moveTo(step - 1))}
+              onClick={() => (success || step === 0 ? onBack() : moveTo(step - 1))}
             >
-              {t("back")}
+              {success ? t("login") : t("back")}
             </button>
-            {step < steps.length - 1 ? (
-              <button type="button" className="primary-button big-button" onClick={() => moveTo(step + 1)}>
+            {success ? null : step < steps.length - 1 ? (
+              <button type="button" className="primary-button big-button" onClick={continueToNext}>
                 {t("continue")} <ArrowRight size={20} />
               </button>
             ) : (
-              <button className="primary-button big-button">
-                {t("save")} <ArrowRight size={20} />
+              <button className="primary-button big-button" disabled={saving}>
+                {saving ? t("creatingAccount") : t("save")} <ArrowRight size={20} />
               </button>
             )}
           </div>
@@ -695,25 +732,48 @@ function AccountApp() {
   );
   const [senior, setSenior] = useState<Senior>(demoSenior);
   const [plan, setPlan] = useState<CarePlan>(demoCarePlan);
-  const [credentials, setCredentials] = useState<Credentials | null>(null);
-  const signIn = (input: Credentials) => {
-    if (!credentials) return true;
-    return (
-      input.email === credentials.email &&
-      input.password === credentials.password
-    );
+  const signIn = async (input: Credentials) => {
+    if (!supabase) return false;
+    const { error } = await supabase.auth.signInWithPassword(input);
+    return !error;
+  };
+  const createAccount = async (person: Senior, carePlan: CarePlan, account: Credentials) => {
+    if (!supabaseConfigured || !supabase) throw new Error("Supabase is not configured");
+    const { data, error } = await supabase.auth.signUp({
+      email: account.email,
+      password: account.password,
+      options: {
+        data: {
+          display_name: person.display_name,
+          preferred_language: person.preferred_language,
+          phone: person.phone_e164,
+        },
+      },
+    });
+    if (error) throw error;
+    if (!data.user) throw new Error("Supabase did not return a user");
+    const savedPerson = { ...person, id: data.user.id };
+    try {
+      await api.createSenior(savedPerson);
+    } catch {
+      // The auth account exists even if the local FastAPI service is offline.
+      // Do not present that as a failed account creation.
+      return "profile-pending" as const;
+    }
+    setSenior(savedPerson);
+    setPlan(carePlan);
+    i18n.changeLanguage(supportedLanguage(savedPerson.preferred_language));
+    if (data.session) {
+      setScreen("dashboard");
+      return "signed-in" as const;
+    }
+    return "confirm-email" as const;
   };
   if (screen === "signup")
     return (
       <Signup
         onBack={() => setScreen("login")}
-        onSave={(person, carePlan, account) => {
-          setSenior(person);
-          setPlan(carePlan);
-          setCredentials(account);
-          i18n.changeLanguage(supportedLanguage(person.preferred_language));
-          setScreen("dashboard");
-        }}
+        onSave={createAccount}
       />
     );
   return screen === "dashboard" ? (
@@ -724,8 +784,8 @@ function AccountApp() {
     />
   ) : (
     <Login
-      onSignIn={(input) => {
-        const success = signIn(input);
+      onSignIn={async (input) => {
+        const success = await signIn(input);
         if (success) setScreen("dashboard");
         return success;
       }}
