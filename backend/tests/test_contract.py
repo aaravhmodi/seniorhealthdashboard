@@ -335,7 +335,13 @@ def test_linq_photo_webhook_records_a_pending_med_update(client):
             "media_urls": ["https://example.test/bottles.jpg"],
         },
     )
-    assert resp.json() == {"ok": True, "senior_id": "sen_rosa", "medications_added": 0}
+    body = resp.json()
+    # Subset, not equality: the webhook response gained `intent` and `actions`
+    # when the family side went live, and additive fields are allowed.
+    assert body["ok"] is True
+    assert body["senior_id"] == "sen_rosa"
+    assert body["medications_added"] == 0
+    assert "media_recorded" in body["actions"]
 
     summaries = [e["type"] for e in client.get("/seniors/sen_rosa/timeline").json()["entries"]]
     assert "meds.updated" in summaries

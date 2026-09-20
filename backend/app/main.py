@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from . import followup, linq, linq_events
 from .config import get_settings
 from .routers import api, ws
 from .schemas import CONTRACT_VERSION
@@ -31,7 +33,26 @@ async def lifespan(app: FastAPI):
     seed(store)
     # Index on boot so the first voice session already has context.
     api.retrieval_reindex()
-    yield
+
+    # The follow-up and escalation clock. One task, cancelled on shutdown, so
+    # a reload does not leave a second one sending duplicate texts.
+    scheduler = asyncio.create_task(followup.scheduler())
+
+    # Tell Linq where to deliver tapbacks and replies. Best effort: a failure
+    # here means inbound stops working, not that the app stops booting.
+    settings = get_settings()
+    if linq.is_enabled() and settings.public_api_base:
+        await linq.ensure_webhook(
+            f"{settings.public_api_base.rstrip('/')}/webhooks/linq",
+            linq_events.SUBSCRIBED_EVENTS,
+        )
+
+    try:
+        yield
+    finally:
+        scheduler.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler
 
 
 app = FastAPI(

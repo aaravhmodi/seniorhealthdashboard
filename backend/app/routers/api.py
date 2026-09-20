@@ -21,19 +21,25 @@ from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
-from .. import llm, retrieval, voice
+from .. import caretone, circle, followup, linq, linq_events, llm, retrieval, voice
 from ..ladder import evaluate
 from ..notify import notify_caregivers
-from ..persona import voice_output_available
+from ..persona import TEACH_BACK, voice_output_available
 from ..schemas import (
+    ActionLevel,
+    Alert,
     BaselineSummary,
+    CarePlan,
+    CareCircle,
     CheckIn,
     CheckInSource,
     CheckInCreate,
     CheckInResponse,
+    CircleEnrollRequest,
     EventType,
     EvidenceCard,
     Evaluation,
+    FollowUpJob,
     HandoffPacket,
     Health,
     LinqInbound,
@@ -41,6 +47,8 @@ from ..schemas import (
     Senior,
     SeniorAnswer,
     SeniorQuestion,
+    TeachBackRequest,
+    TeachBackResult,
     Timeline,
     TimelineEntry,
     WSEvent,
@@ -237,7 +245,17 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
             ),
         )
 
+    # If this check-in was answering a follow-up we sent, close that loop and
+    # record whether they are worse than their own normal -- which is the
+    # question the 24/72-hour cadence exists to ask.
+    followup.record_followup_answer(
+        senior.id, evaluation, store.baseline(senior.id).mean_level
+    )
+
     if should_build(evaluation):
+        # ED level means a discharge is coming, so queue the 24h and 72h
+        # checks now rather than hoping someone remembers to.
+        followup.schedule_after_discharge(senior, evaluation)
         packet = build_packet(
             senior,
             checkin,
@@ -343,32 +361,227 @@ def evidence_preview(senior_id: str, text: str) -> list[EvidenceCard]:
 
 
 # --------------------------------------------------------------------------
+# Care circle -- the Linq group chat, created when people put their numbers in
+# --------------------------------------------------------------------------
+@router.post("/circle/enroll", response_model=CareCircle, tags=["circle"])
+async def circle_enroll(payload: CircleEnrollRequest) -> CareCircle:
+    """Sign-up posts here: caregivers go on the senior, the group chat opens.
+
+    This is the moment the family side starts existing. Consent is recorded per
+    caregiver, and a caregiver who did not consent is neither added to the chat
+    nor ever messaged.
+    """
+    senior = _get_senior(payload.senior_id)
+    circle.add_caregivers(senior, payload.caregivers)
+    return await circle.open_circle(
+        senior,
+        include_patient=payload.include_patient,
+        patient_phone=payload.patient_phone_e164,
+    )
+
+
+@router.get("/circle/{senior_id}", response_model=CareCircle, tags=["circle"])
+def circle_get(senior_id: str) -> CareCircle:
+    _get_senior(senior_id)
+    state = store.circles.get(senior_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="no care circle for this senior")
+    return state
+
+
+@router.get("/circle/{senior_id}/alerts", response_model=list[Alert], tags=["circle"])
+def circle_alerts(senior_id: str, open_only: bool = False) -> list[Alert]:
+    """What we sent the family, and who has answered.
+
+    The dashboard's red state comes from here: an alert with no acknowledgement
+    and an exhausted escalation chain is the one a nurse needs to see.
+    """
+    _get_senior(senior_id)
+    if open_only:
+        return circle.open_alerts_for(senior_id)
+    return sorted(
+        (a for a in store.alerts.values() if a.senior_id == senior_id),
+        key=lambda a: a.created_at,
+        reverse=True,
+    )
+
+
+@router.post("/circle/alerts/{alert_id}/ack", response_model=Alert, tags=["circle"])
+def circle_ack(alert_id: str, caregiver_id: str = Body(..., embed=True)) -> Alert:
+    """Acknowledge from the dashboard, for a caregiver who called instead."""
+    alert = store.alerts.get(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="unknown alert")
+    senior = _get_senior(alert.senior_id)
+    caregiver = next((cg for cg in senior.caregivers if cg.id == caregiver_id), None)
+    if not caregiver:
+        raise HTTPException(status_code=404, detail="unknown caregiver")
+    return circle.acknowledge(alert, caregiver, via="dashboard")
+
+
+@router.post("/circle/alerts/{alert_id}/escalate", response_model=Alert, tags=["circle"])
+async def circle_escalate(alert_id: str) -> Alert:
+    """Escalate now rather than waiting out the clock. Used on stage, and by a
+    nurse who already knows the first caregiver is unreachable."""
+    alert = store.alerts.get(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="unknown alert")
+    await circle.escalate(alert)
+    return store.alerts[alert_id]
+
+
+# --------------------------------------------------------------------------
+# Post-discharge follow-up and teach-back
+# --------------------------------------------------------------------------
+@router.get(
+    "/seniors/{senior_id}/followups", response_model=list[FollowUpJob], tags=["followup"]
+)
+def list_followups(senior_id: str) -> list[FollowUpJob]:
+    _get_senior(senior_id)
+    return followup.jobs_for(senior_id)
+
+
+@router.post(
+    "/seniors/{senior_id}/followups", response_model=list[FollowUpJob], tags=["followup"]
+)
+def schedule_followups(senior_id: str) -> list[FollowUpJob]:
+    """Queue the 24h and 72h checks by hand, for a discharge we did not see."""
+    senior = _get_senior(senior_id)
+    evaluation = store.latest_evaluation(senior_id)
+    if not evaluation:
+        raise HTTPException(status_code=409, detail="no evaluation to follow up on")
+    return followup.schedule_after_discharge(senior, evaluation)
+
+
+@router.get("/seniors/{senior_id}/care-plan", response_model=CarePlan, tags=["followup"])
+def get_care_plan(senior_id: str) -> CarePlan:
+    _get_senior(senior_id)
+    return followup.care_plan_for(senior_id)
+
+
+@router.put("/seniors/{senior_id}/care-plan", response_model=CarePlan, tags=["followup"])
+def put_care_plan(senior_id: str, payload: CarePlan) -> CarePlan:
+    """The discharge instructions the teach-back is scored against.
+
+    Stored in the words the senior was actually given them in -- scoring a
+    teach-back against a paraphrase we invented would fail people for our own
+    rewording.
+    """
+    _get_senior(senior_id)
+    plan = payload.model_copy(update={"senior_id": senior_id, "updated_at": now()})
+    store.care_plans[senior_id] = plan
+    return plan
+
+
+@router.post("/teachback", response_model=TeachBackResult, tags=["followup"])
+async def teach_back(payload: TeachBackRequest) -> TeachBackResult:
+    """The senior says their instructions back; we check what survived.
+
+    A miss texts the caregiver. We never tell the senior they got it wrong --
+    the kiosk repeats the part that did not come back, which is what a nurse
+    does, and is the whole reason teach-back beats "do you understand?".
+    """
+    senior = _get_senior(payload.senior_id)
+    return await followup.run_teach_back(
+        senior,
+        payload.spoken,
+        language=payload.language or senior.preferred_language,
+        instructions=payload.instructions,
+        followup_id=payload.followup_id,
+    )
+
+
+@router.get(
+    "/seniors/{senior_id}/teachbacks", response_model=list[TeachBackResult],
+    tags=["followup"],
+)
+def list_teachbacks(senior_id: str) -> list[TeachBackResult]:
+    _get_senior(senior_id)
+    return list(reversed(store.teachbacks[senior_id]))
+
+
+@router.get("/teachback/prompt/{senior_id}", tags=["followup"])
+def teach_back_prompt(senior_id: str, language: Optional[str] = None) -> dict:
+    """What to ask, and what we will score it against.
+
+    The kiosk needs both: the question in their language, and the instructions
+    so it can read them aloud first.
+    """
+    senior = _get_senior(senior_id)
+    lang = language or senior.preferred_language
+    plan = followup.care_plan_for(senior_id)
+    return {
+        "prompt": TEACH_BACK.get(lang, TEACH_BACK["en"]),
+        "language": lang,
+        "instructions": plan.instructions,
+        "voice_output": voice_output_available(lang),
+    }
+
+
+# --------------------------------------------------------------------------
 # Linq inbound webhook (backend-only)
 # --------------------------------------------------------------------------
 @router.post("/webhooks/linq", tags=["webhooks"])
 async def linq_webhook(
     request: Request,
-    payload: LinqInbound,
     x_linq_signature: Optional[str] = Header(default=None),
+    webhook_id: Optional[str] = Header(default=None, alias="webhook-id"),
+    webhook_timestamp: Optional[str] = Header(default=None, alias="webhook-timestamp"),
+    webhook_signature: Optional[str] = Header(default=None, alias="webhook-signature"),
 ) -> dict:
+    """Everything the family sends back: tapbacks, replies, photos.
+
+    Linq retries a non-2xx for twenty-five minutes, so an event we simply do
+    not act on is answered 200 with `handled: false` rather than a 4xx.
+    """
     settings = get_settings()
+    raw = await request.body()
+
     if not settings.mock_mode:
-        raw = await request.body()
-        expected = hmac.new(
-            settings.linq_webhook_secret.encode(), raw, hashlib.sha256
-        ).hexdigest()
-        if not x_linq_signature or not hmac.compare_digest(expected, x_linq_signature):
+        # Standard Webhooks first, since that is what Linq actually sends; the
+        # Sprint-0 X-Linq-Signature HMAC stays valid so the Postman collection
+        # and any existing integration keep working.
+        ok = linq.verify_signature(
+            raw, webhook_id, webhook_timestamp, webhook_signature,
+            settings.linq_webhook_secret,
+        )
+        if not ok:
+            expected = hmac.new(
+                settings.linq_webhook_secret.encode(), raw, hashlib.sha256
+            ).hexdigest()
+            ok = bool(x_linq_signature) and hmac.compare_digest(expected, x_linq_signature)
+        if not ok:
             raise HTTPException(status_code=401, detail="bad signature")
 
-    senior, caregiver = store.caregiver_by_thread(payload.thread_id)
-    if not senior:
-        senior, caregiver = store.caregiver_by_phone(payload.from_phone_e164)
+    try:
+        envelope = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="body is not JSON")
+
+    payload = linq_events.normalize(envelope)
+    if payload is None:
+        return {"ok": True, "handled": False, "reason": "event not actionable"}
+
+    senior, caregiver = linq_events.resolve(payload)
     if not senior:
         raise HTTPException(status_code=404, detail="no senior for that thread")
 
-    # Sprint 3: a photo of the pill bottles goes to a vision model, gets
-    # normalized against the ingredient dictionary and re-scored by FAERS.
-    # Sprint 0 records the intent so the UI can render the pending state.
+    chat_id = (store.circles.get(senior.id).chat_id if store.circles.get(senior.id) else None)
+    actions: list[str] = []
+
+    # -- a tapback: the cheapest acknowledgement there is ------------------
+    if payload.reaction:
+        if caregiver and linq_events.is_ack_reaction(payload.reaction):
+            alert = linq_events.alert_for_reaction(senior, payload)
+            if alert:
+                circle.acknowledge(alert, caregiver, via="tapback", detail=payload.reaction)
+                actions.append("acknowledged")
+        return {
+            "ok": True, "handled": bool(actions), "senior_id": senior.id,
+            "actions": actions, "reaction": payload.reaction,
+        }
+
+    # -- a photo of the pill bottles --------------------------------------
     added: list[Medication] = []
     if payload.media_urls:
         store.add_timeline(
@@ -386,7 +599,10 @@ async def linq_webhook(
             senior.id,
             {"pending": True, "media_count": len(payload.media_urls)},
         )
+        actions.append("media_recorded")
 
+    # -- a reply --------------------------------------------------------
+    intent = caretone.detect_intent(payload.text) if payload.text else None
     if payload.text:
         store.add_timeline(
             senior.id,
@@ -394,21 +610,85 @@ async def linq_webhook(
                 at=payload.received_at or now(),
                 type=EventType.CAREGIVER_MESSAGE,
                 summary=f"Inbound from {caregiver.name if caregiver else 'caregiver'}",
-                detail={"text": payload.text},
+                detail={"text": payload.text, "intent": intent},
             ),
         )
         bus.publish(
             EventType.CAREGIVER_MESSAGE,
             senior.id,
-            {"direction": "inbound", "text": payload.text},
+            {"direction": "inbound", "text": payload.text, "intent": intent},
         )
 
-    return {"ok": True, "senior_id": senior.id, "medications_added": len(added)}
+    if intent == "ack" and caregiver:
+        open_alerts = circle.open_alerts_for(senior.id)
+        if open_alerts:
+            circle.acknowledge(open_alerts[0], caregiver, via="text", detail=payload.text)
+            actions.append("acknowledged")
+    elif intent == "status":
+        # "Where is Dad?" -- the most-used feature on the family side.
+        if await linq_events.answer_status(senior, chat_id, payload.from_phone_e164):
+            actions.append("status_sent")
+    elif intent == "call":
+        if await linq_events.answer_call_request(senior, chat_id, payload.from_phone_e164):
+            actions.append("call_requested")
+    elif intent == "help":
+        if await linq_events.answer_help(senior, chat_id, payload.from_phone_e164):
+            actions.append("help_sent")
+    elif intent == "stop" and caregiver:
+        # Consent withdrawn in the only place they can withdraw it: the thread.
+        senior.consent[f"share_with:{caregiver.id}"] = False
+        store.put_senior(senior)
+        actions.append("opted_out")
+
+    return {
+        "ok": True,
+        "handled": bool(actions),
+        "senior_id": senior.id,
+        "medications_added": len(added),
+        "intent": intent,
+        "actions": actions,
+    }
+
 
 
 # --------------------------------------------------------------------------
 # Demo controls -- handy on stage, and the reset the UI needs between runs
 # --------------------------------------------------------------------------
+@router.post("/demo/tick", tags=["demo"])
+async def demo_tick() -> dict:
+    """Advance the scheduler by hand: send what is due, escalate what is late.
+
+    The background loop does this every few seconds anyway. On stage you want
+    it to happen on a keystroke, and in a test you want it without a sleep.
+    """
+    return await followup.tick()
+
+
+@router.get("/linq/status", tags=["demo"])
+async def linq_status() -> dict:
+    """Is the family side real right now, and from which number.
+
+    The pitch slide claims Linq is live; this is the endpoint that proves it
+    rather than asserting it.
+    """
+    settings = get_settings()
+    return {
+        "enabled": linq.is_enabled(),
+        "mock_mode": settings.mock_mode,
+        "api_key_configured": bool(settings.linq_api_key),
+        "sending_number": await linq.sending_number(),
+        "care_team_number": settings.linq_care_team_number or None,
+        "subscribed_events": linq_events.SUBSCRIBED_EVENTS,
+        "circles": len(store.circles),
+        "open_alerts": sum(1 for a in store.alerts.values() if not a.resolved),
+        "scheduled_followups": sum(
+            1 for j in store.followups.values() if j.status == "scheduled"
+        ),
+        "followup_time_scale": settings.followup_time_scale,
+        "escalation_timeout_minutes": settings.escalation_timeout_minutes,
+    }
+
+
 @router.post("/demo/reset", tags=["demo"])
 def demo_reset() -> Health:
     store.seniors.clear()
@@ -416,6 +696,11 @@ def demo_reset() -> Health:
     store.evaluations.clear()
     store.handoffs.clear()
     store.timeline.clear()
+    store.circles.clear()
+    store.alerts.clear()
+    store.followups.clear()
+    store.care_plans.clear()
+    store.teachbacks.clear()
     seed(store)
     retrieval_reindex()
     return Health(mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors))

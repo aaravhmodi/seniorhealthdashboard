@@ -5,12 +5,15 @@ HIPAA-grade, so an outbound text carries a status word and a link. No symptoms,
 no medicines, no diagnosis. The detail lives behind the link, which requires the
 caregiver's consented session.
 
-compose() is pure and unit-tested; send() is the side effect.
+This module is now the seam between the check-in pipeline and the family side.
+The composition lives in `caretone.py` (how we say bad news in a text), the
+transport in `linq.py`, and the group chat plus escalation clock in
+`circle.py`. What stays here is `compose()` -- pure, unit-tested, and the place
+the PHI assertion fires -- and the one call the router makes.
 """
 from __future__ import annotations
 
-import httpx
-
+from . import caretone, circle, linq
 from .config import get_settings
 from .schemas import (
     ActionLevel,
@@ -19,7 +22,7 @@ from .schemas import (
     NotificationReceipt,
     Senior,
 )
-from .store import now
+from .store import now, store
 
 STATUS_WORD: dict[int, str] = {
     1: "checked in, all steady",
@@ -33,58 +36,43 @@ _BANNED_SUBSTRINGS = ("diagnos", "chest pain", "confusion", "medication", "mg")
 
 
 def compose(senior: Senior, evaluation: Evaluation, caregiver: Caregiver) -> str:
+    """The body that goes to the family.
+
+    Delegates the wording to `caretone.alert_body` -- SPIKES compressed into
+    one text -- and keeps the PHI assertion here, where it has always been,
+    so no change to the voice can quietly smuggle a symptom into an SMS.
+    """
     settings = get_settings()
     link = f"{settings.public_web_base}/c/{senior.id}?ev={evaluation.id}"
     first_name = senior.display_name.split()[0]
-    body = (
-        f"{first_name} {STATUS_WORD[int(evaluation.level)]}. "
-        f"Open the details: {link}"
+    body = caretone.alert_body(
+        first_name, int(evaluation.level), link, caregiver_name=caregiver.name
     )
-    if int(evaluation.level) >= int(ActionLevel.GO_TO_ER):
-        body += " Reply HELP to reach the care team."
     assert not any(b in body.lower() for b in _BANNED_SUBSTRINGS), "PHI leaked into SMS"
     return body
 
 
 def recipients(senior: Senior, evaluation: Evaluation) -> list[Caregiver]:
-    return [
-        cg for cg in senior.caregivers
-        if int(evaluation.level) >= int(cg.notify_at_level)
-        and senior.consent.get(f"share_with:{cg.id}", False)
-    ]
+    """Who hears about this evaluation, in escalation order.
+
+    Consent and each caregiver's own threshold both apply. The order matters:
+    the first name in this list is the one the alert is addressed to, and the
+    rest are the escalation chain behind it.
+    """
+    return circle.escalation_chain(senior, evaluation.level)
 
 
 async def send(
     senior: Senior, evaluation: Evaluation, caregiver: Caregiver
 ) -> NotificationReceipt:
-    settings = get_settings()
+    """One-to-one send. Used for escalations and for a senior with no circle yet."""
     body = compose(senior, evaluation, caregiver)
     receipt = NotificationReceipt(
         to=caregiver.id, thread_id=caregiver.linq_thread_id, body=body
     )
-
-    if settings.mock_mode or not settings.linq_api_key:
-        receipt.status = "mocked"
-        receipt.sent_at = now()
-        return receipt
-
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                f"{settings.linq_api_base}/v1/messages",
-                headers={"Authorization": f"Bearer {settings.linq_api_key}"},
-                json={
-                    "thread_id": caregiver.linq_thread_id,
-                    "to": [caregiver.phone_e164],
-                    "text": body,
-                },
-            )
-            resp.raise_for_status()
-            receipt.status = "sent"
-            receipt.thread_id = resp.json().get("thread_id", caregiver.linq_thread_id)
-    except Exception:
-        # A messaging outage must never break a check-in.
-        receipt.status = "failed"
+    result = await linq.send_direct(caregiver.phone_e164, body)
+    receipt.status = "mocked" if result.mocked else ("sent" if result.ok else "failed")
+    receipt.thread_id = result.chat_id or caregiver.linq_thread_id
     receipt.sent_at = now()
     return receipt
 
@@ -92,4 +80,49 @@ async def send(
 async def notify_caregivers(
     senior: Senior, evaluation: Evaluation
 ) -> list[NotificationReceipt]:
-    return [await send(senior, evaluation, cg) for cg in recipients(senior, evaluation)]
+    """Alert the family about an evaluation.
+
+    One message into the group chat, not one per caregiver -- the daughter and
+    the son seeing each other's replies is the point. The returned receipts are
+    still per caregiver, because that is what the dashboard and the contract
+    expect, and because the escalation chain is exactly who was covered.
+    """
+    chain = recipients(senior, evaluation)
+    if not chain:
+        return []
+
+    alert = await circle.raise_alert(senior, evaluation)
+    if alert is None:
+        return []
+
+    circle_state = store.circles.get(senior.id)
+    delivered = bool(alert.message_id)
+    status = "sent" if delivered else "failed"
+    if not linq.is_enabled() and delivered:
+        status = "mocked"
+
+    receipts: list[NotificationReceipt] = []
+    for index, cg in enumerate(chain):
+        receipts.append(
+            NotificationReceipt(
+                to=cg.id,
+                thread_id=alert.chat_id or (circle_state.chat_id if circle_state else None),
+                body=alert.body,
+                # Everyone in the circle receives the group message; anyone
+                # further down the chain is covered but not yet asked, which
+                # is what "skipped" means on the dashboard.
+                status=status if index == 0 or circle_state else "skipped",
+                sent_at=alert.created_at,
+            )
+        )
+    return receipts
+
+
+__all__ = [
+    "STATUS_WORD",
+    "ActionLevel",
+    "compose",
+    "recipients",
+    "send",
+    "notify_caregivers",
+]
