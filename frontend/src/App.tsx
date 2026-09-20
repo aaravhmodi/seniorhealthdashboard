@@ -106,11 +106,19 @@ function followUpText(key: FollowUpKey, language: string) {
   return followUpPrompts[key][language] || followUpPrompts[key].en;
 }
 
-function genericFollowUp(): FollowUp {
+function genericFollowUp(language = "en"): FollowUp {
+  const copy: Record<string, { question: string; why: string }> = {
+    en: { question: "What else should I know: when did it start, and is it getting better or worse?", why: "Your answer helps us understand the timing and whether anything is changing." },
+    es: { question: "¿Qué más debo saber: cuándo comenzó y está mejorando o empeorando?", why: "Su respuesta nos ayuda a entender cuándo comenzó y si algo está cambiando." },
+    pt: { question: "O que mais devo saber: quando começou e está melhorando ou piorando?", why: "Sua resposta nos ajuda a entender quando começou e se algo está mudando." },
+    zh: { question: "还有什么需要告诉我：什么时候开始的？是在好转还是加重？", why: "您的回答有助于我们了解症状的时间和变化。" },
+    hi: { question: "मुझे और क्या जानना चाहिए: यह कब शुरू हुआ, और बेहतर हो रहा है या बिगड़ रहा है?", why: "आपका जवाब हमें समय और बदलाव समझने में मदद करता है।" },
+  };
+  const selected = copy[language] || copy.en;
   return {
     code: "probe:generic",
-    question: "What else should I know: when did it start, and is it getting better or worse?",
-    why: "Your answer helps us understand the timing and whether anything is changing.",
+    question: selected.question,
+    why: selected.why,
     sharpens: 1,
     opens: false,
     generic: true,
@@ -909,7 +917,7 @@ function Dashboard({
     void api.checkin(latest.id, i18n.language)
       .then((result) => {
         setEvaluation(result.evaluation);
-        setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp());
+        setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp(i18n.language));
         setFollowUpForId(latest.id);
       })
       .catch(() => {
@@ -947,7 +955,7 @@ function Dashboard({
           [askedFollowUpForId]: [...(current[askedFollowUpForId] || []), { question: askedFollowUp.question, answer: text.trim(), checkinId: result.checkin.id }],
         }));
       }
-      setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp());
+      setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp(i18n.language));
       setFollowUpForId(result.checkin.id);
       updateMessage("");
     } catch (reason) {
