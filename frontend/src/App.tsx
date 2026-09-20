@@ -1294,16 +1294,16 @@ function Dashboard({
                   <h2>{t("providerSummary")}</h2>
                   <p>{displayCheckinText(checkin.raw_text, i18n.language)}</p>
                   {followUpRecords[checkin.id]?.map((record, index) => <p key={`${record.question}-${index}`}><strong>{record.question}</strong><br />{record.answer}</p>)}
+                  {/* Keep the explanation next to the recorded conversation,
+                      before the action list, so history answers "what could
+                      this have been?" as well as "what did I do?". */}
+                  {checkinDetails[checkin.id].evaluation.risk && (
+                    <RiskPanel risk={checkinDetails[checkin.id].evaluation.risk!} />
+                  )}
                   <h2>{t("suggestedAction")}</h2>
                   <p className="history-action-level">{checkinDetails[checkin.id].evaluation.level_label}</p>
                   <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
                   <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
-                  {/* The same panel as the home page, against the evaluation
-                      that was made at the time -- so "why did it tell me to go
-                      in?" has an answer a week later, not just in the moment. */}
-                  {checkinDetails[checkin.id].evaluation.risk && (
-                    <RiskPanel risk={checkinDetails[checkin.id].evaluation.risk!} />
-                  )}
                   {checkinDetails[checkin.id].evaluation.level >= 3 && handoffDetails[checkin.id] && (
                     <div className="handoff-summary">
                       <h3>{t("providerHandoffSummary")}</h3>

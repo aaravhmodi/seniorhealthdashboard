@@ -335,15 +335,21 @@ def get_checkin(
     checkin = store.checkins.get(checkin_id)
     if not checkin:
         raise HTTPException(status_code=404, detail="unknown check-in")
-    evaluation = store.evaluation_for_checkin(checkin_id)
-    if not evaluation:
+    stored_evaluation = store.evaluation_for_checkin(checkin_id)
+    if not stored_evaluation:
         raise HTTPException(status_code=409, detail="check-in has no evaluation yet")
-    if language:
-        senior = _get_senior(checkin.senior_id)
-        evaluation = evaluate(
-            checkin, senior, store.baseline(senior.id),
-            previous_level=evaluation.previous_level, language=language,
-        )
+    # Rebuild historical evaluations on read so records created before the
+    # risk explanation was added still receive the same risk panel as a new
+    # check-in.  Keep the recorded previous level for trend context, while
+    # using the requested language for the returned explanation and follow-up.
+    senior = _get_senior(checkin.senior_id)
+    evaluation = evaluate(
+        checkin,
+        senior,
+        store.baseline(senior.id),
+        previous_level=stored_evaluation.previous_level,
+        language=language or senior.preferred_language,
+    )
     return CheckInResponse(checkin=checkin, evaluation=evaluation)
 
 
