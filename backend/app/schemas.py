@@ -56,6 +56,12 @@ class EventType(str, Enum):
     MEDS_UPDATED = "meds.updated"
     HANDOFF_READY = "handoff.ready"
     CAREGIVER_MESSAGE = "caregiver.message"
+    CIRCLE_CREATED = "circle.created"
+    ALERT_ACKNOWLEDGED = "alert.acknowledged"
+    ALERT_ESCALATED = "alert.escalated"
+    FOLLOWUP_SCHEDULED = "followup.scheduled"
+    FOLLOWUP_SENT = "followup.sent"
+    TEACHBACK_COMPLETED = "teachback.completed"
 
 
 # --------------------------------------------------------------------------
@@ -69,6 +75,9 @@ class Caregiver(BaseModel):
     preferred_language: str = "en"
     linq_thread_id: Optional[str] = None
     notify_at_level: ActionLevel = ActionLevel.CALL_CLINIC
+    # Who we reach first, second, third. Ties break on list order. The backup
+    # caregiver only ever hears from us when the one before them went quiet.
+    escalation_order: int = 0
 
 
 class Medication(BaseModel):
@@ -291,14 +300,172 @@ class HandoffPacket(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# Care circle -- the Linq group chat the family actually lives in
+# --------------------------------------------------------------------------
+class CircleMember(BaseModel):
+    """One handle in the group chat, and what they are there as."""
+
+    handle: str                       # E.164 phone or an iMessage email
+    name: str
+    role: Literal["patient", "caregiver", "care_team"] = "caregiver"
+    caregiver_id: Optional[str] = None
+
+
+class CareCircle(BaseModel):
+    """The group thread: patient + caregivers + care team, one place.
+
+    `chat_id` is Linq's. It is the only handle we need to send anything, and
+    it is what an inbound webhook is matched back to a senior on.
+    """
+
+    senior_id: str
+    chat_id: Optional[str] = None
+    group_name: str
+    members: list[CircleMember] = []
+    created_at: Optional[datetime] = None
+    status: Literal["active", "pending", "failed"] = "pending"
+    mocked: bool = False
+    error: Optional[str] = None
+
+
+class CaregiverEnroll(BaseModel):
+    """What the sign-up form posts when someone puts their number in."""
+
+    name: str = Field(min_length=1, max_length=120)
+    phone_e164: str = Field(min_length=7, max_length=20)
+    relationship: str = "family"
+    preferred_language: str = "en"
+    notify_at_level: ActionLevel = ActionLevel.CALL_CLINIC
+    escalation_order: int = 0
+    consent: bool = True               # they agreed to be texted about this person
+
+
+class CircleEnrollRequest(BaseModel):
+    senior_id: str
+    caregivers: list[CaregiverEnroll] = Field(min_length=1)
+    include_patient: bool = True       # the patient is in their own group chat
+    patient_phone_e164: Optional[str] = None
+
+
+# --------------------------------------------------------------------------
+# Escalation -- an alert nobody answered
+# --------------------------------------------------------------------------
+class AlertAck(BaseModel):
+    caregiver_id: str
+    at: datetime
+    via: Literal["tapback", "text", "dashboard"] = "tapback"
+    detail: Optional[str] = None
+
+
+class Alert(BaseModel):
+    """One outbound alert and its acknowledgement state.
+
+    The escalation clock starts when this is created. If no caregiver has
+    acknowledged by `escalate_after`, the next one in `pending_order` is texted
+    directly and the clock restarts.
+    """
+
+    id: str
+    senior_id: str
+    evaluation_id: Optional[str] = None
+    level: ActionLevel
+    created_at: datetime
+    body: str
+    chat_id: Optional[str] = None
+    message_id: Optional[str] = None
+    notified: list[str] = []          # caregiver ids already reached
+    pending_order: list[str] = []     # caregiver ids still to try, in order
+    acks: list[AlertAck] = []
+    escalate_after: Optional[datetime] = None
+    escalations: int = 0
+    resolved: bool = False
+
+    @property
+    def acknowledged(self) -> bool:
+        return bool(self.acks)
+
+
+# --------------------------------------------------------------------------
+# Post-discharge follow-up and teach-back
+# --------------------------------------------------------------------------
+class FollowUpJob(BaseModel):
+    """A scheduled check-in after an ED visit. 24h, then 72h."""
+
+    id: str
+    senior_id: str
+    kind: Literal["checkin", "teachback"] = "checkin"
+    due_at: datetime
+    hours_after: float
+    source_evaluation_id: Optional[str] = None
+    status: Literal["scheduled", "sent", "answered", "failed", "cancelled"] = "scheduled"
+    sent_at: Optional[datetime] = None
+    answered_at: Optional[datetime] = None
+    result_level: Optional[ActionLevel] = None
+    worsened: bool = False
+    note: Optional[str] = None
+
+
+class TeachBackRequest(BaseModel):
+    """The senior saying their discharge instructions back, in their own words.
+
+    `spoken` is the Deepgram transcript. We never grade the person -- we grade
+    whether the instruction survived the handoff.
+    """
+
+    senior_id: str
+    spoken: str = Field(min_length=1, max_length=4000)
+    language: str = "en"
+    instructions: Optional[list[str]] = None   # defaults to the stored care plan
+    followup_id: Optional[str] = None
+
+
+class TeachBackItem(BaseModel):
+    instruction: str
+    covered: bool
+    matched_terms: list[str] = []
+    score: float = Field(default=0.0, ge=0, le=1)
+
+
+class TeachBackResult(BaseModel):
+    senior_id: str
+    at: datetime
+    language: str
+    spoken: str
+    items: list[TeachBackItem] = []
+    score: float = Field(default=0.0, ge=0, le=1)
+    passed: bool = False
+    missed: list[str] = []
+    caregiver_alerted: bool = False
+    prompt: str = ""                  # what we asked, in their language
+
+
+class CarePlan(BaseModel):
+    """Discharge instructions, in the words the senior was given them in."""
+
+    senior_id: str
+    instructions: list[str] = []
+    routines: list[str] = []
+    updated_at: Optional[datetime] = None
+
+
+# --------------------------------------------------------------------------
 # Linq webhook (backend-only surface)
 # --------------------------------------------------------------------------
 class LinqInbound(BaseModel):
+    """Our own flattened shape. Sprint 0 posted this directly; the real Linq
+    webhook is normalized into it by `linq_events.normalize`."""
+
     thread_id: str
     from_phone_e164: str
     text: Optional[str] = None
     media_urls: list[str] = []
     received_at: Optional[datetime] = None
+    # Set when the inbound was a tapback rather than a message. `reaction` is
+    # Linq's type string ("like", "love", an emoji); `reacted_to` is the
+    # message it landed on, which is how an ack is tied back to an alert.
+    reaction: Optional[str] = None
+    reacted_to: Optional[str] = None
+    event: Optional[str] = None       # "message.received", "reaction.added", ...
 
 
 class Health(BaseModel):

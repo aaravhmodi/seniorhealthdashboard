@@ -13,11 +13,16 @@ from datetime import datetime, timedelta, timezone
 
 from .schemas import (
     ActionLevel,
+    Alert,
     BaselineSummary,
+    CarePlan,
+    CareCircle,
     CheckIn,
     Evaluation,
+    FollowUpJob,
     HandoffPacket,
     Senior,
+    TeachBackResult,
     TimelineEntry,
 )
 
@@ -41,6 +46,12 @@ class Store:
         self.evaluations: dict[str, Evaluation] = {}
         self.handoffs: dict[str, HandoffPacket] = {}
         self.timeline: dict[str, list[TimelineEntry]] = defaultdict(list)
+        # -- Linq family side --------------------------------------------
+        self.circles: dict[str, CareCircle] = {}          # senior_id -> group chat
+        self.alerts: dict[str, Alert] = {}                # alert_id -> alert
+        self.followups: dict[str, FollowUpJob] = {}       # job_id -> job
+        self.care_plans: dict[str, CarePlan] = {}         # senior_id -> discharge plan
+        self.teachbacks: dict[str, list[TeachBackResult]] = defaultdict(list)
 
     # -- seniors ----------------------------------------------------------
     def put_senior(self, senior: Senior) -> Senior:
@@ -66,6 +77,17 @@ class Store:
                 if cg.linq_thread_id == thread_id:
                     return senior, cg
         return None, None
+
+    def senior_by_chat(self, chat_id: str) -> Senior | None:
+        """Which senior a Linq group chat belongs to.
+
+        Inbound webhooks arrive with a chat id and a sender handle; the chat is
+        the reliable half, because a caregiver may text from a second device.
+        """
+        for senior_id, circle in self.circles.items():
+            if circle.chat_id and circle.chat_id == chat_id:
+                return self.seniors.get(senior_id)
+        return None
 
     # -- check-ins --------------------------------------------------------
     def put_checkin(self, checkin: CheckIn) -> CheckIn:
