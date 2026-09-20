@@ -155,6 +155,14 @@ def test_caregiver_reply_rejects_vague_unnamed_action(with_key, monkeypatch):
     assert "we are staying with" not in result.value.lower()
 
 
+def test_caregiver_reply_does_not_repeat_seed_profile_name(with_key, monkeypatch):
+    link = "https://carepath.test/c/sen_rosa"
+    fake_chat(monkeypatch, f"Is Rosa dizzy, or are you? Details: {link}")
+    result = llm.caregiver_reply("Rosa", 1, "caregiver concern", link, "I feel dizzy")
+    assert result.used_model is False
+    assert "Is Rosa dizzy" not in result.value
+
+
 def test_caregiver_reply_fallback_does_not_claim_a_call_was_made(monkeypatch):
     monkeypatch.setattr(llm, "is_enabled", lambda: False)
     result = llm.caregiver_reply(
@@ -164,6 +172,52 @@ def test_caregiver_reply_fallback_does_not_claim_a_call_was_made(monkeypatch):
     assert result.used_model is False
     assert "Reply CALL to request a nurse call" in result.value
     assert "No call has been placed yet" in result.value
+
+
+def test_caregiver_reply_receives_dataset_context(with_key, monkeypatch):
+    """Linq turns use the same NEISS/FAERS retrieval context as dashboard Q&A."""
+    link = "https://carepath.test/c/sen_rosa"
+    context = retrieval.RetrievedContext(
+        query="dizziness",
+        chunks=[retrieval.Chunk(
+            id="stat_dizziness",
+            text="Among NEISS senior cases, dizziness-related visits had a documented outcome.",
+            kind="cohort_stat",
+            source="CPSC NEISS, ages 65+",
+        )],
+        scores=[0.91],
+    )
+    seen = {}
+
+    def reply(messages):
+        seen["prompt"] = messages[1]["content"]
+        return f"The latest evidence is available in the secure details: {link}."
+
+    fake_chat(monkeypatch, reply)
+    result = llm.caregiver_reply(
+        "Rosa", 1, "caregiver concern", link, "She feels dizzy", context=context,
+    )
+    assert result.used_model is True
+    assert "CPSC NEISS, ages 65+" in seen["prompt"]
+    assert "dizziness-related visits" in seen["prompt"]
+
+
+def test_caregiver_reply_repairs_a_contextual_draft_instead_of_repeating_fallback(
+    with_key, monkeypatch
+):
+    link = "https://carepath.test/c/sen_rosa"
+    replies = iter([
+        f"Sudden imbalance and confusion need urgent care. Details: {link}",
+        f"Please reply CALL to request a nurse call; no call has been placed yet. Details: {link}",
+    ])
+    calls = fake_chat(monkeypatch, lambda messages: next(replies))
+    result = llm.caregiver_reply(
+        "Rosa", 2, "caregiver concern", link,
+        "She is stumbling and cannot keep her balance",
+    )
+    assert result.used_model is True
+    assert "no call has been placed yet" in result.value.lower()
+    assert len(calls) == 2
 
 
 # -- extraction is additive, never subtractive ----------------------------

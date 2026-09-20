@@ -18,7 +18,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import caretone, circle, linq, llm
+from . import caretone, circle, linq, llm, retrieval
 from .schemas import (
     ActionLevel,
     Alert,
@@ -259,8 +259,18 @@ async def answer_conversation(
     """Answer an unrecognized caregiver message with bounded, contextual warmth."""
     evaluation = store.latest_evaluation(senior.id)
     level = int(evaluation.level) if evaluation else 1
+    # Keep the live conversation on the same evidence path as dashboard Q&A:
+    # history plus the loaded NEISS/FAERS corpus, scoped to this senior.
+    context = retrieval.build_context(
+        message,
+        senior_id=senior.id,
+        language=getattr(senior, "preferred_language", "en") or "en",
+        k=5,
+    )
     result_text = llm.caregiver_reply(
-        senior.display_name.split()[0], level, category, circle.detail_link(senior.id), message
+        senior.display_name.split()[0], level, category, circle.detail_link(senior.id), message,
+        context=context,
+        evidence=evaluation.evidence if evaluation else None,
     )
     result = await (linq.send_to_chat(chat_id, result_text.value) if chat_id
                     else linq.send_direct(to, result_text.value))
