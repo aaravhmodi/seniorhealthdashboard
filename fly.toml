@@ -12,9 +12,14 @@ primary_region = "bos"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  # Do NOT let this sleep. A stopped machine runs no scheduler, so the 24-hour
+  # follow-up and the escalation timeout never fire on time -- and an alert
+  # that should have escalated to the second caregiver at minute ten instead
+  # waits for whoever next opens the app. Requests still wake it either way;
+  # keeping one machine up is what makes the timers real.
+  auto_stop_machines = "off"
+  min_machines_running = 1
 
 [[http_service.checks]]
   path = "/healthz"

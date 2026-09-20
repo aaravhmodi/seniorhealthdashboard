@@ -343,3 +343,47 @@ def test_a_redelivered_alert_then_starts_its_clock(client, linq_down):
 def test_a_check_in_still_succeeds_while_linq_is_down(client, linq_down):
     """The whole reason linq.py returns results instead of raising."""
     assert _ed_checkin(client).status_code == 200
+
+
+# --------------------------------------------------------------------------
+# Sleeping hosts
+# --------------------------------------------------------------------------
+def test_overdue_work_catches_up_on_wake(client):
+    """Render stops the process after ~15 minutes idle and Fly suspends on the
+    same idea, so nothing time-triggered fires while it is down. What must be
+    true is that the backlog runs on the first tick after it wakes -- that is
+    what makes the outage "late" rather than "never"."""
+    _enroll(client)
+    _ed_checkin(client)
+
+    # The process was asleep for three hours. Everything is long overdue.
+    for job in list(store.followups.values()):
+        job.due_at = now() - timedelta(hours=3)
+        store.followups[job.id] = job
+    for alert in list(store.alerts.values()):
+        if alert.escalate_after:
+            alert.escalate_after = now() - timedelta(hours=3)
+            store.alerts[alert.id] = alert
+
+    woke = client.post("/demo/tick").json()
+    assert woke["followups_sent"], "the overdue follow-up did not go out on wake"
+    assert woke["alerts_escalated"], "the overdue escalation did not fire on wake"
+
+    assert all(j["status"] == "sent" for j in client.get("/seniors/sen_rosa/followups").json())
+    alert = client.get("/circle/sen_rosa/alerts").json()[0]
+    assert alert["escalations"] == 1
+    assert len(alert["notified"]) == 2
+
+
+def test_a_long_sleep_does_not_fire_the_same_job_twice(client):
+    """Catching up must not mean sending the backlog once per tick."""
+    _enroll(client)
+    _ed_checkin(client)
+    for job in list(store.followups.values()):
+        job.due_at = now() - timedelta(hours=3)
+        store.followups[job.id] = job
+
+    first = client.post("/demo/tick").json()["followups_sent"]
+    second = client.post("/demo/tick").json()["followups_sent"]
+    assert first
+    assert second == []
