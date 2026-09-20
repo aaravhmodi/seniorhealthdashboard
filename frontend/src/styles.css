@@ -75,6 +75,12 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .profile-form { margin-top: 1.25rem; }
 .signup-progress { margin-top: .25rem; }
 
+/* The backend action ladder provides the title, explanation, and next actions. */
+.guidance-level { color: #276b51; font-size: .92rem; font-weight: 700; margin-bottom: .45rem; }
+.guidance-card.urgent .guidance-level, .guidance-card.emergency .guidance-level { color: #a03f3b; }
+.guidance-list { margin: 1rem 0 0; padding-left: 1.3rem; display: grid; gap: .65rem; color: #315d4d; font-weight: 600; line-height: 1.45; }
+.live-transcript { margin: .85rem 0 0; color: #276b51; font-weight: 600; }
+
 /* Keep a history entry easy to scan: symptom, date, then the note. */
 .history-record { display: grid; grid-template-columns: 160px 185px minmax(0, 1fr); align-items: start; gap: 0 1rem; }
 .history-record > strong { grid-column: 1; }.history-record > p:first-of-type { grid-column: 2; }.history-record > p:last-of-type { grid-column: 3; }

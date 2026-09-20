@@ -18,6 +18,17 @@ import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
 type Credentials = { email: string; password: string };
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 const splitList = (value: FormDataEntryValue | null) =>
   String(value || "")
     .split(",")
@@ -47,6 +58,16 @@ const presetCheckinText: Record<string, Record<string, string>> = {
 
 function displayCheckinText(text: string | undefined, language: string) {
   return presetCheckinText[text || ""]?.[language] || text;
+}
+
+const emptyCarePlan: CarePlan = { routines: [], instructions: [], appointments: [] };
+function savedValue<T>(key: string): T | null {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : null;
+  } catch {
+    return null;
+  }
 }
 function Brand() {
   return (
@@ -100,7 +121,7 @@ function Login({
   onSignIn,
   onCreate,
 }: {
-  onSignIn: (credentials: Credentials) => Promise<boolean>;
+  onSignIn: (credentials: Credentials) => Promise<void>;
   onCreate: () => void;
 }) {
   const { t } = useTranslation();
@@ -109,7 +130,19 @@ function Login({
   const [error, setError] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!(await onSignIn({ email, password }))) setError(t("signInFailed"));
+    setError("");
+    try {
+      await onSignIn({ email, password });
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : "";
+      setError(
+        detail.toLowerCase().includes("email not confirmed")
+          ? t("emailNotConfirmed")
+          : detail
+            ? `${t("signInFailed")} ${detail}`
+            : t("signInFailed"),
+      );
+    }
   }
   return (
     <main className="login-page">
@@ -123,8 +156,28 @@ function Login({
         <form className="sign-in-box" onSubmit={submit}>
           <LanguagePicker />
           <h2>{t("login")}</h2>
-          <Field id="email" label={t("email")} type="email" required />
-          <Field id="password" label={t("password")} type="password" required />
+          <div>
+            <label htmlFor="email">{t("email")}</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="password">{t("password")}</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </div>
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -149,9 +202,11 @@ function Login({
 function Signup({
   onBack,
   onSave,
+  existingUserId,
 }: {
   onBack: () => void;
   onSave: (senior: Senior, plan: CarePlan, credentials: Credentials) => Promise<"signed-in" | "confirm-email" | "profile-pending">;
+  existingUserId?: string;
 }) {
   const { t, i18n } = useTranslation();
   const [medicationCount, setMedicationCount] = useState(1);
@@ -169,7 +224,7 @@ function Signup({
   }
 
   function validateStep(stepToValidate: number, form: FormData) {
-    if (stepToValidate === 0) {
+    if (stepToValidate === 0 && !existingUserId) {
       const email = String(form.get("account-email") || "");
       const password = String(form.get("account-password") || "");
       if (!email || password.length < 8) {
@@ -287,25 +342,13 @@ function Signup({
           <section hidden={step !== 0} aria-labelledby="signup-account">
             <h2 id="signup-account">{t("account")}</h2>
             <p>{t("oneThing")}</p>
-            <div className="form-grid">
-              <div className="full">
-                <Field
-                  id="account-email"
-                  label={t("email")}
-                  type="email"
-                />
+            {existingUserId ? <p>{t("alreadySignedIn")}</p> : (
+              <div className="form-grid">
+                <div className="full"><Field id="account-email" label={t("email")} type="email" /></div>
+                <Field id="account-password" label={t("password")} type="password" />
+                <Field id="confirm-password" label={t("confirmPassword")} type="password" />
               </div>
-              <Field
-                id="account-password"
-                label={t("password")}
-                type="password"
-              />
-              <Field
-                id="confirm-password"
-                label={t("confirmPassword")}
-                type="password"
-              />
-            </div>
+            )}
           </section>
           <section hidden={step !== 1} aria-labelledby="signup-about">
             <h2 id="signup-about">{t("about")}</h2>
@@ -537,7 +580,10 @@ function Dashboard({
   const [evaluation, setEvaluation] = useState(demoEvaluation);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [listening, setListening] = useState(false);
   const languageLoaded = useRef(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const guidanceTone = evaluation.level >= 4 ? "emergency" : evaluation.level >= 3 ? "urgent" : evaluation.level === 2 ? "watch" : "calm";
   useEffect(() => {
     const voiceLanguage = (event: Event) =>
       i18n.changeLanguage(
@@ -579,6 +625,47 @@ function Dashboard({
     } finally {
       setSaving(false);
     }
+  };
+  const toggleListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+    const speechWindow = window as unknown as {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setError(t("voiceNotSupported"));
+      return;
+    }
+    const recognition = new Recognition();
+    const startingText = message.trim();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = i18n.language === "zh" ? "zh-CN" : i18n.language === "pt" ? "pt-BR" : i18n.language === "hi" ? "hi-IN" : i18n.language === "es" ? "es-ES" : "en-US";
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interimText = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (result.isFinal) finalText += result[0].transcript;
+        else interimText += result[0].transcript;
+      }
+      setMessage([startingText, finalText, interimText].filter(Boolean).join(" ").trim());
+    };
+    recognition.onerror = () => {
+      setError(t("voiceNotSupported"));
+    };
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setListening(false);
+    };
+    recognitionRef.current = recognition;
+    setError("");
+    setListening(true);
+    recognition.start();
   };
   return (
     <div className="app-shell">
@@ -635,9 +722,9 @@ function Dashboard({
               rows={4}
             />
             <div className="checkin-actions">
-              <button className="voice-button" type="button">
+              <button className="voice-button" type="button" onClick={toggleListening} aria-pressed={listening}>
                 <Mic size={20} />
-                {t("speak")}
+                {listening ? t("stopListening") : t("speak")}
               </button>
               <button
                 className="primary-button big-button"
@@ -647,11 +734,20 @@ function Dashboard({
                 {saving ? "Saving…" : t("check")} <ArrowRight size={20} />
               </button>
             </div>
+            {listening && <p className="live-transcript" role="status">{t("listening")}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
           </section>
-          <section className="guidance-card watch">
-            <h2>{t("guidance")}</h2>
-            <p>{evaluation.explanation}</p>
+          <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
+            <div className="guidance-content">
+              <p className="guidance-level">{evaluation.level_label}</p>
+              <h2>{t("guidance")}</h2>
+              <p>{evaluation.explanation}</p>
+              {evaluation.recommended_actions.length > 0 && (
+                <ul className="guidance-list">
+                  {evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}
+                </ul>
+              )}
+            </div>
           </section>
         </main>
       )}
@@ -731,28 +827,50 @@ function AccountApp() {
     "login",
   );
   const [senior, setSenior] = useState<Senior>(demoSenior);
-  const [plan, setPlan] = useState<CarePlan>(demoCarePlan);
+  const [plan, setPlan] = useState<CarePlan>(emptyCarePlan);
+  const [profileSetupUserId, setProfileSetupUserId] = useState<string | null>(null);
   const signIn = async (input: Credentials) => {
-    if (!supabase) return false;
-    const { error } = await supabase.auth.signInWithPassword(input);
-    return !error;
-  };
-  const createAccount = async (person: Senior, carePlan: CarePlan, account: Credentials) => {
-    if (!supabaseConfigured || !supabase) throw new Error("Supabase is not configured");
-    const { data, error } = await supabase.auth.signUp({
-      email: account.email,
-      password: account.password,
-      options: {
-        data: {
-          display_name: person.display_name,
-          preferred_language: person.preferred_language,
-          phone: person.phone_e164,
-        },
-      },
-    });
+    if (!supabase) throw new Error("Supabase is not configured");
+    const { data, error } = await supabase.auth.signInWithPassword(input);
     if (error) throw error;
-    if (!data.user) throw new Error("Supabase did not return a user");
-    const savedPerson = { ...person, id: data.user.id };
+    if (!data.user) throw new Error("Signed in, but no user profile was returned");
+    const profileKey = `carepath-profile:${data.user.id}`;
+    const planKey = `carepath-plan:${data.user.id}`;
+    let profile = savedValue<Senior>(profileKey);
+    if (!profile) {
+      try {
+        profile = await api.senior(data.user.id);
+        localStorage.setItem(profileKey, JSON.stringify(profile));
+      } catch {
+        return { profile: null, plan: emptyCarePlan, userId: data.user.id };
+      }
+    }
+    return { profile, plan: savedValue<CarePlan>(planKey) || emptyCarePlan, userId: data.user.id };
+  };
+  const createAccount = async (person: Senior, carePlan: CarePlan, account: Credentials, existingUserId?: string) => {
+    if (!supabaseConfigured || !supabase) throw new Error("Supabase is not configured");
+    let userId = existingUserId;
+    let hasSession = Boolean(existingUserId);
+    if (!userId) {
+      const { data, error } = await supabase.auth.signUp({
+        email: account.email,
+        password: account.password,
+        options: {
+          data: {
+            display_name: person.display_name,
+            preferred_language: person.preferred_language,
+            phone: person.phone_e164,
+          },
+        },
+      });
+      if (error) throw error;
+      if (!data.user) throw new Error("Supabase did not return a user");
+      userId = data.user.id;
+      hasSession = Boolean(data.session);
+    }
+    const savedPerson = { ...person, id: userId };
+    localStorage.setItem(`carepath-profile:${savedPerson.id}`, JSON.stringify(savedPerson));
+    localStorage.setItem(`carepath-plan:${savedPerson.id}`, JSON.stringify(carePlan));
     try {
       await api.createSenior(savedPerson);
     } catch {
@@ -763,7 +881,7 @@ function AccountApp() {
     setSenior(savedPerson);
     setPlan(carePlan);
     i18n.changeLanguage(supportedLanguage(savedPerson.preferred_language));
-    if (data.session) {
+    if (hasSession) {
       setScreen("dashboard");
       return "signed-in" as const;
     }
@@ -773,7 +891,8 @@ function AccountApp() {
     return (
       <Signup
         onBack={() => setScreen("login")}
-        onSave={createAccount}
+        existingUserId={profileSetupUserId || undefined}
+        onSave={(person, carePlan, account) => createAccount(person, carePlan, account, profileSetupUserId || undefined)}
       />
     );
   return screen === "dashboard" ? (
@@ -785,9 +904,16 @@ function AccountApp() {
   ) : (
     <Login
       onSignIn={async (input) => {
-        const success = await signIn(input);
-        if (success) setScreen("dashboard");
-        return success;
+        const signedIn = await signIn(input);
+        if (!signedIn.profile) {
+          setProfileSetupUserId(signedIn.userId);
+          setScreen("signup");
+          return;
+        }
+        setSenior(signedIn.profile);
+        setPlan(signedIn.plan);
+        i18n.changeLanguage(supportedLanguage(signedIn.profile.preferred_language));
+        setScreen("dashboard");
       }}
       onCreate={() => setScreen("signup")}
     />
