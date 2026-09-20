@@ -10,10 +10,10 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { demoCarePlan, demoCheckins, demoEvaluation, demoSenior } from "./mock";
+import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -576,14 +576,17 @@ function Dashboard({
   const [page, setPage] = useState<"health" | "plan" | "history">("health");
   const [profileOpen, setProfileOpen] = useState(false);
   const [message, setMessage] = useState("");
-  const [checkins, setCheckins] = useState<CheckIn[]>(demoCheckins);
-  const [evaluation, setEvaluation] = useState(demoEvaluation);
+  const [checkins, setCheckins] = useState<CheckIn[]>([]);
+  const [evaluation, setEvaluation] = useState<CheckInResponse["evaluation"] | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [listening, setListening] = useState(false);
+  const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
+  const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
   const languageLoaded = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const guidanceTone = evaluation.level >= 4 ? "emergency" : evaluation.level >= 3 ? "urgent" : evaluation.level === 2 ? "watch" : "calm";
+  const messageRef = useRef("");
+  const guidanceTone = evaluation && (evaluation.level >= 4 ? "emergency" : evaluation.level >= 3 ? "urgent" : evaluation.level === 2 ? "watch" : "calm");
   useEffect(() => {
     const voiceLanguage = (event: Event) =>
       i18n.changeLanguage(
@@ -606,24 +609,44 @@ function Dashboard({
   useEffect(() => {
     if (languageLoaded.current) localStorage.setItem(`carepath-language:${senior.id}`, supportedLanguage(i18n.language));
   }, [i18n.language, senior.id]);
-  const addCheckin = async () => {
-    if (!message.trim() || saving) return;
+  const updateMessage = (nextMessage: string) => {
+    messageRef.current = nextMessage;
+    setMessage(nextMessage);
+  };
+  const addCheckin = async (text = messageRef.current, source = "text") => {
+    if (!text.trim() || saving) return;
     setSaving(true);
     setError("");
     try {
       const result = await api.createCheckIn({
         senior_id: senior.id,
-        text: message.trim(),
+        text: text.trim(),
         language: i18n.language,
-        source: "text",
+        source,
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
-      setMessage("");
-    } catch {
-      setError("This check-in could not be saved. Please start the health service and try again.");
+      updateMessage("");
+    } catch (reason) {
+      const detail = reason instanceof Error ? ` ${reason.message}` : "";
+      setError(`This check-in could not be saved. Please start the health service and try again.${detail}`);
     } finally {
       setSaving(false);
+    }
+  };
+  const openCheckin = async (checkin: CheckIn) => {
+    if (expandedCheckin === checkin.id) {
+      setExpandedCheckin(null);
+      return;
+    }
+    setExpandedCheckin(checkin.id);
+    if (checkinDetails[checkin.id]) return;
+    try {
+      const detail = await api.checkin(checkin.id);
+      setCheckinDetails((current) => ({ ...current, [checkin.id]: detail }));
+    } catch {
+      // Demo history has no backend IDs; the current guidance remains useful.
+      if (evaluation) setCheckinDetails((current) => ({ ...current, [checkin.id]: { checkin, evaluation } }));
     }
   };
   const toggleListening = () => {
@@ -653,7 +676,7 @@ function Dashboard({
         if (result.isFinal) finalText += result[0].transcript;
         else interimText += result[0].transcript;
       }
-      setMessage([startingText, finalText, interimText].filter(Boolean).join(" ").trim());
+      updateMessage([startingText, finalText, interimText].filter(Boolean).join(" ").trim());
     };
     recognition.onerror = () => {
       setError(t("voiceNotSupported"));
@@ -718,7 +741,7 @@ function Dashboard({
             <h2>{t("tell")}</h2>
             <textarea
               value={message}
-              onChange={(event) => setMessage(event.target.value)}
+              onChange={(event) => updateMessage(event.target.value)}
               rows={4}
             />
             <div className="checkin-actions">
@@ -737,7 +760,7 @@ function Dashboard({
             {listening && <p className="live-transcript" role="status">{t("listening")}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
           </section>
-          <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
+          {evaluation && <section className={`guidance-card ${guidanceTone}`} aria-live="polite">
             <div className="guidance-content">
               <p className="guidance-level">{evaluation.level_label}</p>
               <h2>{t("guidance")}</h2>
@@ -748,7 +771,7 @@ function Dashboard({
                 </ul>
               )}
             </div>
-          </section>
+          </section>}
         </main>
       )}
       {page === "plan" && (
@@ -769,11 +792,18 @@ function Dashboard({
           <h1>{t("history")}</h1>
           {checkins.map((checkin) => (
             <article className="history-record" key={checkin.id}>
-              <strong>
-                {checkin.symptoms.map((symptom) => t(`symptom.${symptom.label}`, { defaultValue: symptom.label })).join(", ") || t("check")}
-              </strong>
-              <p>{checkin.created_at}</p>
-              <p>{displayCheckinText(checkin.raw_text, i18n.language)}</p>
+              <button className="history-record-button" type="button" onClick={() => void openCheckin(checkin)} aria-expanded={expandedCheckin === checkin.id}>
+                <strong>{checkin.symptoms.map((symptom) => t(`symptom.${symptom.label}`, { defaultValue: symptom.label })).join(", ") || t("check")}</strong>
+                <p>{checkin.created_at}</p>
+                <p>{displayCheckinText(checkin.raw_text, i18n.language)}</p>
+              </button>
+              {expandedCheckin === checkin.id && checkinDetails[checkin.id] && (
+                <div className="history-detail">
+                  <h2>{checkinDetails[checkin.id].evaluation.level_label}</h2>
+                  <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
+                  <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
+                </div>
+              )}
             </article>
           ))}
         </main>

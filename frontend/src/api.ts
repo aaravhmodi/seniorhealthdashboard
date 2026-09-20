@@ -22,6 +22,7 @@ export const api = {
     request<Alert>(`/circle/alerts/${alertId}/ack`, { method: 'POST', body: JSON.stringify({ caregiver_id: caregiverId }) }),
   alerts: (id: string) => request<Alert[]>(`/circle/${id}/alerts`),
   checkins: (id: string) => request<CheckIn[]>(`/seniors/${id}/checkins`),
+  checkin: (id: string) => request<CheckInResponse>(`/checkins/${id}`),
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
 }
