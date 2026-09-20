@@ -156,7 +156,8 @@ def resolve(inbound: LinqInbound) -> tuple[Optional[Senior], Optional[Caregiver]
     if not senior and inbound.from_phone_e164:
         senior = next(
             (person for person in store.seniors.values()
-             if person.phone_e164 == inbound.from_phone_e164),
+             if person.phone_e164 == inbound.from_phone_e164
+             or inbound.from_phone_e164 in person.linq_handles),
             None,
         )
     return senior, caregiver

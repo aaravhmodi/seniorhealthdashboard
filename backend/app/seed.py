@@ -35,6 +35,7 @@ def _senior_rosa() -> Senior:
     return Senior(
         id="sen_rosa",
         phone_e164="+16175550100",
+        linq_handles=["superaarav06@gmail.com"],
         display_name="Rosa Mendez",
         date_of_birth=date(1947, 3, 14),
         age=79,

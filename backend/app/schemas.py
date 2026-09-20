@@ -97,6 +97,8 @@ class Senior(BaseModel):
     preferred_language: str = "en"        # BCP-47-ish: en, es, zh, pt, hi...
     gender: Optional[str] = None
     phone_e164: Optional[str] = None
+    # Linq can address a person by an iMessage email as well as a phone.
+    linq_handles: list[str] = []
     voice_output_supported: bool = True   # Deepgram TTS covers ~7 languages
     conditions: list[str] = []
     allergies: list[str] = []
