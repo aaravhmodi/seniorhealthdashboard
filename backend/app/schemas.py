@@ -139,6 +139,7 @@ class CheckInCreate(BaseModel):
     vitals: Optional[Vitals] = None
     meds_taken_today: Optional[list[str]] = None
     client_ref: Optional[str] = None    # UI-generated id, for optimistic render
+    follow_up_for_id: Optional[str] = None  # continuation of an earlier check-in
 
 
 class CheckIn(BaseModel):
@@ -154,6 +155,7 @@ class CheckIn(BaseModel):
     meds_taken_today: list[str] = []
     extraction_model: str = "mock-extractor-0"
     client_ref: Optional[str] = None
+    follow_up_for_id: Optional[str] = None
 
 
 # --------------------------------------------------------------------------
@@ -242,6 +244,19 @@ class RiskBand(BaseModel):
     action_level: ActionLevel
 
 
+class FollowUp(BaseModel):
+    """The next question shown after every check-in."""
+
+    code: str
+    question: str
+    why: str
+    concern_code: Optional[str] = None
+    concern_label: Optional[str] = None
+    sharpens: float = 1.0
+    opens: bool = False
+    generic: bool = False
+
+
 class RiskAssessment(BaseModel):
     """Everything the UI needs to show what this could be and why.
 
@@ -266,6 +281,7 @@ class RiskAssessment(BaseModel):
     model_tokens: list[str] = []      # what in the words the model keyed on
     ladder_floor: Optional[ActionLevel] = None
     ladder_note: str = ""
+    follow_up: FollowUp
 
 
 class Evaluation(BaseModel):
@@ -302,6 +318,7 @@ class NotificationReceipt(BaseModel):
     body: str                         # status plus a link only. No PHI.
     status: Literal["sent", "mocked", "failed", "skipped"] = "mocked"
     sent_at: Optional[datetime] = None
+    error: Optional[str] = None
 
 
 class CheckInResponse(BaseModel):
@@ -381,6 +398,7 @@ class HandoffPacket(BaseModel):
     recent_checkins: list[CheckIn] = []
     evidence: list[EvidenceCard] = []
     baseline: BaselineSummary
+    risk: Optional[RiskAssessment] = None
     caregiver_contact: Optional[Caregiver] = None
     disclaimer: str = (
         "Decision support only. Generated from patient-reported check-ins. "

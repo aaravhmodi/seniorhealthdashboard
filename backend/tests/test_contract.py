@@ -68,6 +68,34 @@ def test_checkin_response_shape(client):
         assert field in ev, f"UI depends on evaluation.{field}"
 
 
+def test_follow_up_answer_keeps_the_original_complaint(client):
+    first = client.post(
+        "/checkins",
+        json={
+            "senior_id": "sen_rosa",
+            "language": "en",
+            "text": "I have been dizzy when I stand up.",
+        },
+    )
+    assert first.status_code == 200
+    parent_id = first.json()["checkin"]["id"]
+
+    answer = client.post(
+        "/checkins",
+        json={
+            "senior_id": "sen_rosa",
+            "language": "en",
+            "text": "It started 3 months ago and is getting worse.",
+            "follow_up_for_id": parent_id,
+        },
+    )
+    assert answer.status_code == 200
+    body = answer.json()
+    assert body["checkin"]["follow_up_for_id"] == parent_id
+    assert "dizziness" in {s["label"] for s in body["checkin"]["symptoms"]}
+    assert body["evaluation"]["risk"]["follow_up"]["question"]
+
+
 def test_unknown_senior_is_404(client):
     assert client.post(
         "/checkins", json={"senior_id": "sen_nobody", "text": "hello"}

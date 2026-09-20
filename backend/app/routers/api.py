@@ -178,8 +178,20 @@ async def create_checkin(payload: CheckInCreate, _: auth.Principal = Depends(aut
             }
         )
 
+    # A follow-up answer often contains only the missing detail -- for example
+    # "it started three months ago and is getting worse". Analyze it with the
+    # complaint that the question was about, or the answer looks like a new
+    # symptom-free check-in and the risk ladder resets to "monitor".
+    analysis_text = payload.text
+    if payload.follow_up_for_id:
+        parent = store.checkins.get(payload.follow_up_for_id)
+        if not parent or parent.senior_id != senior.id:
+            raise HTTPException(status_code=404, detail="unknown follow-up check-in")
+        if parent.raw_text:
+            analysis_text = f"{parent.raw_text}\nFollow-up answer: {payload.text}"
+
     # The lexicon always runs; the LLM only adds to it. See llm.extract_symptoms.
-    extraction = llm.extract_symptoms(payload.text, language)
+    extraction = llm.extract_symptoms(analysis_text, language)
 
     checkin = CheckIn(
         id=new_id("chk"),
@@ -187,13 +199,14 @@ async def create_checkin(payload: CheckInCreate, _: auth.Principal = Depends(aut
         created_at=now(),
         source=payload.source,
         language=language,
-        raw_text=payload.text,
+        raw_text=analysis_text,
         transcript_confidence=payload.transcript_confidence,
         symptoms=extraction.value,
         vitals=payload.vitals,
         meds_taken_today=payload.meds_taken_today or [],
         extraction_model=("llm+lexicon" if extraction.used_model else "lexicon"),
         client_ref=payload.client_ref,
+        follow_up_for_id=payload.follow_up_for_id,
     )
     store.put_checkin(checkin)
     retrieval.ingest_patient_history(senior, [checkin])

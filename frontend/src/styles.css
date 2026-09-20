@@ -183,6 +183,8 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 /* Band tones are shared by the strip, the headline and every concern card,
    so a colour always means the same action wherever it appears. */
 .risk-panel { margin-top: 1.65rem; border: 1px solid #dce8df; border-radius: 18px; background: #fff; padding: clamp(1.2rem, 3vw, 1.8rem); }
+.risk-panel-empty { padding: 1.4rem 1.5rem; }
+.risk-panel-empty h2 { font-size: 1.2rem; margin: .2rem 0 .45rem; color: #18352d; }
 .risk-heading { display: flex; gap: 1.2rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .risk-heading > div:first-child { flex: 1 1 320px; }
 .risk-heading h2 { font-size: 1.5rem; line-height: 1.25; margin: .2rem 0 .55rem; color: #18352d; }

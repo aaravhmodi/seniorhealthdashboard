@@ -9,7 +9,7 @@ export interface Senior {
   gender?: string; phone_e164?: string; consent?: Record<string, boolean>; conditions: string[]; allergies: string[]; medications: Medication[]; caregivers?: Caregiver[]
 }
 export interface Symptom { label: string; severity?: number; onset?: string; is_new?: boolean }
-export interface CheckIn { id: string; created_at: string; raw_text?: string; symptoms: Symptom[]; source: string }
+export interface CheckIn { id: string; created_at: string; raw_text?: string; symptoms: Symptom[]; source: string; follow_up_for_id?: string }
 export interface Evaluation {
   level: ActionLevel; level_label: string; explanation: string; explanation_en?: string
   recommended_actions: string[]; confidence: number; red_flags: { label: string; matched_on?: string[]; forces_level?: ActionLevel }[]
@@ -35,6 +35,11 @@ export interface RiskBand {
   band: RiskBandName; label: string; lower_percent: number; upper_percent: number
   action: string; action_level: ActionLevel
 }
+export interface FollowUp {
+  code: string; question: string; why: string
+  concern_code?: string; concern_label?: string
+  sharpens: number; opens: boolean; generic: boolean
+}
 // Built from what the deployment has actually loaded, so the panel cannot
 // claim a dataset that is not there.
 export interface DatasetNote {
@@ -46,6 +51,7 @@ export interface RiskAssessment {
   model_status: string; model_risk_percent?: number; model_auc?: number; model_n?: number
   model_years: string[]; model_holdout_years: string[]; model_basis: string
   model_tokens: string[]; ladder_floor?: ActionLevel; ladder_note: string
+  follow_up: FollowUp
 }
 export interface EvidenceCard {
   kind: string; title: string; detail: string; source: string; weight?: number
@@ -58,13 +64,13 @@ export interface HandoffPacket {
   presenting_complaint: string; level: ActionLevel;
   red_flags: { code: string; label: string; matched_on?: string[] }[];
   medications: Medication[]; allergies: string[]; conditions: string[];
-  recent_checkins: CheckIn[]; disclaimer: string;
+  recent_checkins: CheckIn[]; risk?: RiskAssessment; disclaimer: string;
 }
 export type ReminderKind = 'meds' | 'appointment' | 'refill' | 'caregiver_update'
 export type ReminderRecipient = 'self' | 'caregiver' | 'both'
 export interface ReminderResponse { ok: boolean; mocked: boolean; kind: string; recipient?: string; recipients?: string[]; message_id?: string; message_ids?: string[]; body: string; reply_expected: string; error?: string }
 export interface ReminderJob { id: string; senior_id: string; kind: ReminderKind; language: string; recipient: ReminderRecipient; scheduled_for: string; status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled'; created_at: string; sent_at?: string; message_ids: string[]; error?: string }
-export interface NotificationReceipt { channel: 'linq' | 'none'; to: string; thread_id?: string; body: string; status: 'sent' | 'mocked' | 'failed' | 'skipped'; sent_at?: string }
+export interface NotificationReceipt { channel: 'linq' | 'none'; to: string; thread_id?: string; body: string; status: 'sent' | 'mocked' | 'failed' | 'skipped'; sent_at?: string; error?: string }
 
 // -- Caregiver view (opened from the link in a Linq text) -------------------
 export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }

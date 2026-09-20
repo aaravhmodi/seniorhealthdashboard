@@ -6,7 +6,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await accessToken()
   const url = base ? `${base}${path}` : `/api${path}`
   const response = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers }, ...init })
-  if (!response.ok) throw new Error(`Request failed (${response.status})`)
+  if (!response.ok) {
+    let detail = ""
+    try {
+      const payload = await response.json() as { detail?: string }
+      detail = typeof payload.detail === "string" ? `: ${payload.detail}` : ""
+    } catch {
+      // Preserve the status-only fallback for non-JSON proxy errors.
+    }
+    throw new Error(`Request failed (${response.status})${detail}`)
+  }
   return response.json() as Promise<T>
 }
 
@@ -24,7 +33,7 @@ export const api = {
   checkins: (id: string) => request<CheckIn[]>(`/seniors/${id}/checkins`),
   checkin: (id: string, language: string) => request<CheckInResponse>(`/checkins/${id}?language=${encodeURIComponent(language)}`),
   shareCheckinWithCaregiver: (checkin_id: string) => request<NotificationReceipt>(`/checkins/${checkin_id}/caregiver`, { method: 'POST' }),
-  createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>
+  createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string; follow_up_for_id?: string }) =>
     request<CheckInResponse>('/checkins', { method: 'POST', body: JSON.stringify(payload) }),
   handoff: (id: string) => request<HandoffPacket>(`/handoff/${id}`),
   sendReminder: (senior_id: string, kind: string, language: string, recipient: 'self' | 'caregiver' | 'both') =>

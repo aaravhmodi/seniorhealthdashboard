@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
-  ChevronDown,
   Download,
   Globe2,
   HeartPulse,
@@ -15,9 +14,10 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, DatasetNote, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, FollowUp, HandoffPacket, ReminderJob, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
+import { RiskPanel } from "./RiskPanel";
 
 type Credentials = { email: string; password: string };
 type SpeechRecognitionLike = {
@@ -106,6 +106,17 @@ function followUpText(key: FollowUpKey, language: string) {
   return followUpPrompts[key][language] || followUpPrompts[key].en;
 }
 
+function genericFollowUp(): FollowUp {
+  return {
+    code: "probe:generic",
+    question: "What else should I know: when did it start, and is it getting better or worse?",
+    why: "Your answer helps us understand the timing and whether anything is changing.",
+    sharpens: 1,
+    opens: false,
+    generic: true,
+  };
+}
+
 function pdfEscape(value: string) {
   return value
     .normalize("NFD")
@@ -128,7 +139,7 @@ function wrapPdfText(value: string, limit = 82) {
   if (row) rows.push(row);
   return rows;
 }
-function makeHandoffPdf(data: { patient: string; age: number; createdAt: string; action: string; summary: string; redFlags: string[]; medications: string[]; allergies: string[]; conditions: string[]; actions: string[] }) {
+function makeHandoffPdf(data: { patient: string; age: number; createdAt: string; action: string; summary: string; redFlags: string[]; medications: string[]; allergies: string[]; conditions: string[]; actions: string[]; concerns: string[] }) {
   const chunks: string[] = [
     "q 0.075 0.22 0.18 rg 0 734 612 94 re f Q",
     "q 0.87 0.95 0.90 rg 0 706 612 28 re f Q",
@@ -156,6 +167,7 @@ function makeHandoffPdf(data: { patient: string; age: number; createdAt: string;
   };
   section("Clinical summary", [data.summary]);
   if (data.redFlags.length) section("Reported safety flags", data.redFlags.map((flag) => `- ${flag}`), "0.73 0.25 0.22");
+  if (data.concerns.length) section("What this could be", data.concerns, "0.42 0.38 0.13");
   section("Suggested action", data.actions.length ? data.actions.map((action) => `- ${action}`) : [data.action], "0.12 0.45 0.34");
   section("Health context", [
     `Medicines: ${data.medications.join(", ") || "None recorded"}`,
@@ -570,7 +582,7 @@ function Signup({
                 <Field
                   id="contact-phone"
                   label={t("phone")}
-                  type="tel"
+                  type="text"
                 />
                 <label className="sms-consent">
                   <input name="caregiver-updates" type="checkbox" defaultChecked />
@@ -671,6 +683,7 @@ function Profile({
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             const medications = editableMedications.filter((medication) => medication.name.trim());
+            const caregiverId = contact?.id || "contact";
             const updated: Senior = {
               ...senior,
               display_name: String(form.get("name") || senior.display_name),
@@ -679,16 +692,16 @@ function Profile({
               conditions: splitList(form.get("conditions")),
               allergies: splitList(form.get("allergies")),
               medications,
-              consent: {
-                ...senior.consent,
-                [`share_with:${contact?.id || "contact"}`]: form.get("caregiver-updates") === "on",
-              },
               caregivers: [{
-                id: contact?.id || "contact",
+                id: caregiverId,
                 name: String(form.get("contact-name") || ""),
                 relationship: String(form.get("relationship") || ""),
                 phone_e164: String(form.get("contact-phone") || ""),
               }].filter((caregiver) => caregiver.name && caregiver.relationship && caregiver.phone_e164),
+              consent: {
+                ...senior.consent,
+                [`share_with:${caregiverId}`]: Boolean(form.get("contact-name") && form.get("relationship") && form.get("contact-phone")),
+              },
             };
             setSaving(true);
             setSaveError("");
@@ -704,7 +717,7 @@ function Profile({
               <div className="full"><h3>{t("emergencyCaregiver")}</h3></div>
               <Field id="contact-name" label={t("fullName")} defaultValue={contact?.name || ""} />
               <Field id="relationship" label={t("relationship")} defaultValue={contact?.relationship || ""} />
-              <div className="full"><Field id="contact-phone" label={t("phone")} type="tel" defaultValue={contact?.phone_e164 || ""} /><label className="sms-consent"><input name="caregiver-updates" type="checkbox" defaultChecked={Boolean(senior.consent?.[`share_with:${contact?.id || "contact"}`])} />{t("caregiverUpdatesConsent")}</label></div>
+              <div className="full"><Field id="contact-phone" label={t("phone")} type="text" defaultValue={contact?.phone_e164 || ""} /><label className="sms-consent"><input name="caregiver-updates" type="checkbox" defaultChecked={Boolean(senior.consent?.[`share_with:${contact?.id || "contact"}`])} />{t("caregiverUpdatesConsent")}</label></div>
             </div>
             {saveError && <p className="form-error" role="alert">{saveError}</p>}
             <button className="primary-button" disabled={saving}>{saving ? t("saving") : t("saveChanges")}</button>
@@ -749,246 +762,6 @@ function Profile({
         )}
       </section>
     </div>
-  );
-}
-
-// -- What this could be ----------------------------------------------------
-// The dashboard used to say "go to the emergency department" without saying
-// what it thought this was or how sure it was. This panel answers both, and
-// ties each percentage to the action that percentage earns.
-//
-// One rule holds the whole thing together: every bar is drawn on the SAME
-// 0-100 axis as the band strip at the top, so where a concern lands is
-// visibly why it got the action it got. Nothing here is a decorative meter.
-
-const BAND_TONE: Record<string, string> = {
-  monitor: "calm", today: "watch", emergency: "urgent", now: "critical",
-};
-
-function DriverRow({ driver, widest }: { driver: RiskDriver; widest: number }) {
-  const magnitude = Math.abs(driver.delta_points);
-  return (
-    <div className={`driver-row ${driver.delta_points < 0 ? "lowers" : ""}`}>
-      <div className="driver-head">
-        <span className="driver-label">{driver.label}</span>
-        <strong className="driver-delta">
-          {driver.delta_points >= 0 ? "+" : "\u2212"}{magnitude.toFixed(1)} pts
-        </strong>
-      </div>
-      <div className="driver-track" aria-hidden="true">
-        <div style={{ width: `${widest ? (magnitude / widest) * 100 : 0}%` }} />
-      </div>
-      <p className="driver-detail">{driver.detail}</p>
-      <p className="driver-source">
-        <span className={`driver-badge ${driver.fitted ? "fitted" : "chosen"}`}>
-          {driver.fitted ? "measured" : "clinical weighting"}
-        </span>
-        {driver.source}
-      </p>
-    </div>
-  );
-}
-
-function ConcernCard({ concern, open, onToggle }: {
-  concern: RiskConcern; open: boolean; onToggle: () => void;
-}) {
-  const widest = Math.max(1, ...concern.drivers.map((driver) => Math.abs(driver.delta_points)));
-  const detailId = `concern-why-${concern.code}`;
-  return (
-    <article className={`concern-card ${BAND_TONE[concern.band] || "calm"}`}>
-      <div className="concern-top">
-        <div className="concern-name">
-          <h4>{concern.label}</h4>
-          <p>{concern.plain}</p>
-        </div>
-        <div className="concern-figure">
-          <strong>{concern.probability_percent.toFixed(0)}<small>%</small></strong>
-          <span>{concern.band_label}</span>
-        </div>
-      </div>
-      <div className="concern-meter" aria-hidden="true">
-        <div className="concern-meter-fill" style={{ width: `${concern.probability_percent}%` }} />
-        <div className="concern-meter-base" style={{ left: `${concern.base_rate_percent}%` }} />
-      </div>
-      <p className="concern-scale-note">
-        Starts at {concern.base_rate_percent.toFixed(0)}% for someone your age with this complaint
-        {concern.drivers.length > 0 && <>, then moves to {concern.probability_percent.toFixed(0)}% on what you told us</>}
-      </p>
-      <p className="concern-action">
-        <strong>At {concern.probability_percent.toFixed(0)}%:</strong> {concern.action}
-      </p>
-      <button
-        type="button"
-        className="concern-toggle"
-        aria-expanded={open}
-        aria-controls={detailId}
-        onClick={onToggle}
-      >
-        <ChevronDown size={16} className={open ? "rotated" : ""} />
-        {open ? "Hide the working" : "Why this number?"}
-      </button>
-      {open && (
-        <div className="concern-why" id={detailId}>
-          <div className="why-block">
-            <h5>What raised it at all</h5>
-            <ul className="matched-list">
-              {concern.matched_on.map((match) => <li key={match}>{match}</li>)}
-            </ul>
-          </div>
-          <div className="why-block">
-            <h5>Where the number started</h5>
-            <p>{concern.base_rate_detail}</p>
-          </div>
-          {concern.drivers.length > 0 && (
-            <div className="why-block">
-              <h5>What moved it, and by how much</h5>
-              <div className="driver-list">
-                {concern.drivers.map((driver) => (
-                  <DriverRow key={driver.label} driver={driver} widest={widest} />
-                ))}
-              </div>
-              <p className="driver-caveat">
-                Each figure is this check-in&rsquo;s percentage with that piece of
-                evidence minus the percentage without it. They are not slices of a
-                pie, so they do not add up to the total.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-    </article>
-  );
-}
-
-function RiskPanel({ risk }: { risk: RiskAssessment }) {
-  const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
-  const [showModel, setShowModel] = useState(false);
-  const [showSources, setShowSources] = useState(false);
-  if (!risk.concerns.length) return null;
-  const top = risk.concerns[0];
-  const others = risk.concerns.length - 1;
-
-  return (
-    <section className="risk-panel" aria-labelledby="risk-title">
-      <div className="risk-heading">
-        <div>
-          <p className="eyebrow">What this could be</p>
-          <h2 id="risk-title">
-            {top.label}
-            {others > 0 && <span className="risk-others">, and {others} other thing{others === 1 ? "" : "s"} worth naming</span>}
-          </h2>
-          <p className="risk-sub">
-            Each percentage is how often a presentation like yours ended in
-            hospital rather than being sent home, adjusted for your age, your
-            medicines and what you told us today.
-          </p>
-        </div>
-        <div className={`risk-headline ${BAND_TONE[top.band] || "calm"}`}>
-          <strong>{top.probability_percent.toFixed(0)}<small>%</small></strong>
-          <span>{top.band_label}</span>
-        </div>
-      </div>
-
-      <div className="band-strip">
-        <div className="band-track">
-          {risk.bands.map((band) => (
-            <div
-              key={band.band}
-              className={`band-zone ${BAND_TONE[band.band]}`}
-              style={{ width: `${band.upper_percent - band.lower_percent}%` }}
-            >
-              <span>{band.label}</span>
-            </div>
-          ))}
-          <div className="band-marker" style={{ left: `${top.probability_percent}%` }} aria-hidden="true" />
-        </div>
-        <div className="band-ticks">
-          {risk.bands.map((band) => (
-            <span key={band.band} style={{ left: `${band.lower_percent}%` }}>{band.lower_percent}%</span>
-          ))}
-          <span style={{ left: "100%" }}>100%</span>
-        </div>
-      </div>
-
-      <div className="concern-list">
-        {risk.concerns.map((concern) => (
-          <ConcernCard
-            key={concern.code}
-            concern={concern}
-            open={openCode === concern.code}
-            onToggle={() => setOpenCode(openCode === concern.code ? null : concern.code)}
-          />
-        ))}
-      </div>
-
-      <div className="risk-provenance">
-        <button
-          type="button"
-          className="concern-toggle"
-          aria-expanded={showSources}
-          onClick={() => setShowSources(!showSources)}
-        >
-          <ChevronDown size={16} className={showSources ? "rotated" : ""} />
-          Where these numbers come from
-        </button>
-        {showSources && (
-          <ul className="source-list">
-            {risk.datasets.map((dataset: DatasetNote) => (
-              <li key={dataset.name} className={dataset.loaded ? "" : "not-loaded"}>
-                <div className="source-head">
-                  <strong>{dataset.name}</strong>
-                  <span className="source-role">{dataset.role}</span>
-                  {dataset.trained && <span className="source-tag trained">model trained on this</span>}
-                  {!dataset.loaded && <span className="source-tag missing">not loaded here</span>}
-                </div>
-                <p>{dataset.detail}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-        {risk.model_risk_percent !== undefined && risk.model_risk_percent !== null && (
-          <p className="model-headline">
-            The trained model reads this check-in at{" "}
-            <strong>{risk.model_risk_percent.toFixed(0)}%</strong> overall risk of
-            needing admission or observation.
-          </p>
-        )}
-        <button
-          type="button"
-          className="concern-toggle"
-          aria-expanded={showModel}
-          onClick={() => setShowModel(!showModel)}
-        >
-          <ChevronDown size={16} className={showModel ? "rotated" : ""} />
-          How that model was trained
-        </button>
-        {showModel && (
-          <div className="model-detail">
-            <p>{risk.model_basis}</p>
-            <div className="model-stats">
-              {risk.model_n ? <div><span>Training records</span><strong>{risk.model_n.toLocaleString()}</strong></div> : null}
-              {risk.model_years.length ? <div><span>Years</span><strong>{risk.model_years.join(", ")}</strong></div> : null}
-              {risk.model_auc ? <div><span>Held-out AUC</span><strong>{risk.model_auc.toFixed(3)}</strong></div> : null}
-              {risk.model_holdout_years.length ? <div><span>Tested on</span><strong>{risk.model_holdout_years.join(", ")}</strong></div> : null}
-            </div>
-            {risk.model_tokens.length > 0 && (
-              <>
-                <h5>What it keyed on in your words</h5>
-                <ul className="token-list">
-                  {risk.model_tokens.map((token) => <li key={token}>{token}</li>)}
-                </ul>
-                <p className="driver-caveat">
-                  These are the terms with the largest positive contribution to
-                  this score, read straight off the fitted model &mdash; not a
-                  guess about what it might have used.
-                </p>
-              </>
-            )}
-          </div>
-        )}
-        <p className="risk-ladder-note">{risk.ladder_note}</p>
-      </div>
-    </section>
   );
 }
 
@@ -1065,7 +838,7 @@ function Dashboard({
   const [routineDraft, setRoutineDraft] = useState(plan.routines.join(", "));
   const [instructionDraft, setInstructionDraft] = useState(plan.instructions.join(", "));
   const [appointmentDraft, setAppointmentDraft] = useState({ title: "", date: "", location: "" });
-  const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
+  const [pendingFollowUp, setPendingFollowUp] = useState<FollowUp | null>(null);
   const [followUpForId, setFollowUpForId] = useState<string | null>(null);
   const [followUpRecords, setFollowUpRecords] = useState<Record<string, FollowUpRecord[]>>(() => savedValue<Record<string, FollowUpRecord[]>>(`carepath-followups:${senior.id}`) || {});
   const [downloadingHandoff, setDownloadingHandoff] = useState(false);
@@ -1125,11 +898,20 @@ function Dashboard({
   useEffect(() => {
     localStorage.setItem(`carepath-followups:${senior.id}`, JSON.stringify(followUpRecords));
   }, [followUpRecords, senior.id]);
+  // Re-read the newest check-in's evaluation whenever the list or the language
+  // changes. This deliberately does NOT require an evaluation to already be in
+  // state: without that, guidance and the risk panel only existed for as long
+  // as the tab stayed open, and a refresh silently dropped the one screen that
+  // says what to do.
   useEffect(() => {
     const latest = checkins[0];
-    if (!latest || !evaluation) return;
+    if (!latest) return;
     void api.checkin(latest.id, i18n.language)
-      .then((result) => setEvaluation(result.evaluation))
+      .then((result) => {
+        setEvaluation(result.evaluation);
+        setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp());
+        setFollowUpForId(latest.id);
+      })
       .catch(() => {
         // Keep the last safely generated guidance if the API is offline.
       });
@@ -1143,7 +925,8 @@ function Dashboard({
     setSaving(true);
     setError("");
     setShareStatus("");
-    const askedKey = followUpKey;
+    const askedFollowUp = pendingFollowUp;
+    const askedFollowUpForId = followUpForId;
     try {
       if (!profileRegistered.current) {
         await api.createSenior(senior);
@@ -1154,27 +937,18 @@ function Dashboard({
         text: text.trim(),
         language: i18n.language,
         source,
+        follow_up_for_id: askedFollowUpForId || undefined,
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
-      if (askedKey && followUpForId) {
+      if (askedFollowUp && askedFollowUpForId) {
         setFollowUpRecords((current) => ({
           ...current,
-          [followUpForId]: [...(current[followUpForId] || []), { question: followUpText(askedKey, i18n.language), answer: text.trim(), checkinId: result.checkin.id }],
+          [askedFollowUpForId]: [...(current[askedFollowUpForId] || []), { question: askedFollowUp.question, answer: text.trim(), checkinId: result.checkin.id }],
         }));
       }
-      if (askedKey === "back-severity") {
-        setFollowUpKey("back-warning-signs");
-      } else if (askedKey === "back-warning-signs") {
-        setFollowUpKey(null);
-        setFollowUpForId(null);
-      } else if (result.checkin.symptoms.some((symptom) => symptom.label === "back pain")) {
-        setFollowUpKey("back-severity");
-        setFollowUpForId(result.checkin.id);
-      } else {
-        setFollowUpKey(null);
-        setFollowUpForId(null);
-      }
+      setPendingFollowUp(result.evaluation.risk?.follow_up || genericFollowUp());
+      setFollowUpForId(result.checkin.id);
       updateMessage("");
     } catch (reason) {
       const detail = reason instanceof Error ? ` ${reason.message}` : "";
@@ -1200,6 +974,7 @@ function Dashboard({
         medications: packet.medications.map((medication) => `${medication.name}${medication.dose ? ` (${medication.dose})` : ""}`),
         allergies: packet.allergies,
         conditions: packet.conditions,
+        concerns: packet.risk?.concerns.map((concern) => `- ${concern.label}: ${concern.probability_percent.toFixed(0)}% — ${concern.action}`) || [],
       });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1233,7 +1008,7 @@ function Dashboard({
     setShareStatus("");
     try {
       const receipt = await api.shareCheckinWithCaregiver(latestCheckin.id);
-      setShareStatus(receipt.status === "mocked" ? "Demo update queued for your caregiver." : receipt.status === "sent" ? "Update sent to your caregiver." : "The caregiver update could not be sent.");
+      setShareStatus(receipt.status === "mocked" ? "Demo update queued for your caregiver." : receipt.status === "sent" ? "Update sent to your caregiver." : receipt.error || "The caregiver update could not be sent.");
     } catch (reason) {
       setShareStatus(reason instanceof Error ? reason.message : "The caregiver update could not be sent.");
     } finally {
@@ -1380,14 +1155,14 @@ function Dashboard({
             <p>{t("feeling")}</p>
           </div>
           <section className="checkin-card">
-            {followUpKey && (
+            {pendingFollowUp && (
               <div className="followup-question" role="status">
                 <p className="eyebrow">{t("oneMoreQuestion")}</p>
-                <h3>{followUpText(followUpKey, i18n.language)}</h3>
-                <p className="helper-text">{t("answerHelps")}</p>
+                <h3>{pendingFollowUp.question}</h3>
+                <p className="helper-text">{pendingFollowUp.why}</p>
               </div>
             )}
-            <h2>{followUpKey ? t("yourAnswer") : t("tell")}</h2>
+            <h2>{pendingFollowUp ? t("yourAnswer") : t("tell")}</h2>
             <textarea
               value={message}
               onChange={(event) => updateMessage(event.target.value)}
@@ -1523,6 +1298,12 @@ function Dashboard({
                   <p className="history-action-level">{checkinDetails[checkin.id].evaluation.level_label}</p>
                   <p>{checkinDetails[checkin.id].evaluation.explanation}</p>
                   <ul>{checkinDetails[checkin.id].evaluation.recommended_actions.map((action) => <li key={action}>{action}</li>)}</ul>
+                  {/* The same panel as the home page, against the evaluation
+                      that was made at the time -- so "why did it tell me to go
+                      in?" has an answer a week later, not just in the moment. */}
+                  {checkinDetails[checkin.id].evaluation.risk && (
+                    <RiskPanel risk={checkinDetails[checkin.id].evaluation.risk!} />
+                  )}
                   {checkinDetails[checkin.id].evaluation.level >= 3 && handoffDetails[checkin.id] && (
                     <div className="handoff-summary">
                       <h3>{t("providerHandoffSummary")}</h3>

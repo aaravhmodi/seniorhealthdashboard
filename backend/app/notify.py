@@ -77,6 +77,7 @@ async def send(
     receipt.status = "mocked" if result.mocked else ("sent" if result.ok else "failed")
     receipt.thread_id = result.chat_id or caregiver.linq_thread_id
     receipt.sent_at = now()
+    receipt.error = result.error
     return receipt
 
 

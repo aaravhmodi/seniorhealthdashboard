@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, HeartPulse, Phone, Users } from 'lucide-react'
 import { api } from './api'
 import type { CaregiverView } from './types'
+import { RiskPanel } from './RiskPanel'
 
 const LEVEL_TONE: Record<number, { label: string; className: string }> = {
   1: { label: 'Steady', className: 'level-1' },
@@ -110,6 +111,14 @@ export default function Caregiver({ token }: { token: string }) {
           <h2>Why now</h2>
           <ul className="action-list">{evaluation.red_flags.map(f => <li key={f.label}><AlertTriangle size={16}/> {f.label}</li>)}</ul>
         </section>
+      )}
+
+      {/* The question a family actually asks after "what do I do" is "what do
+          you think this IS". The same panel the patient sees, on the same
+          numbers -- a caregiver who is told to drive to a hospital deserves
+          the reasoning, not a level and a verb. */}
+      {evaluation?.risk && (
+        <RiskPanel risk={evaluation.risk} audience="caregiver" />
       )}
 
       {baseline.checkin_count > 0 && (

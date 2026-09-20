@@ -199,7 +199,13 @@ class Store:
         simple, and replaced by the real baseline service in Sprint 2.
         """
         cutoff = now() - timedelta(days=window_days)
-        rows = [c for c in self.checkins_for(senior_id) if c.created_at >= cutoff]
+        # A follow-up answer is part of the preceding conversation, not a
+        # second independent day in the senior's baseline. It still remains a
+        # check-in for the audit trail and evaluation history.
+        rows = [
+            c for c in self.checkins_for(senior_id)
+            if c.created_at >= cutoff and c.follow_up_for_id is None
+        ]
         freq: defaultdict[str, int] = defaultdict(int)
         for c in rows:
             for s in c.symptoms:

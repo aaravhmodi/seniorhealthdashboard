@@ -107,6 +107,7 @@ def build_packet(
         recent_checkins=recent[:5],
         evidence=evaluation.evidence,
         baseline=baseline,
+        risk=evaluation.risk,
         caregiver_contact=caregiver,
     )
 

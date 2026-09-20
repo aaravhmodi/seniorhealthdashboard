@@ -73,6 +73,15 @@ def test_a_quiet_checkin_raises_no_concerns():
     assessment = _assess(_checkin("I feel fine today.", []), _senior())
     assert assessment.concerns == []
     assert assessment.overall_percent is None
+    assert assessment.follow_up.generic is True
+    assert assessment.follow_up.question
+
+
+def test_a_concerning_checkin_always_gets_a_specific_follow_up():
+    assessment = _assess(_checkin("I fell and hit my head.", ["fall"]), _senior())
+    assert assessment.follow_up.generic is False
+    assert assessment.follow_up.concern_code in {c.code for c in assessment.concerns}
+    assert assessment.follow_up.question
 
 
 def test_every_concern_names_what_triggered_it():

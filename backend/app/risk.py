@@ -36,6 +36,7 @@ from .datasets import model as outcome_model
 from .datasets.narratives import features as narrative_features
 from .extraction import fold
 from .rules import BLOOD_THINNERS, HEAD_STRIKE as SPOKEN_HEAD_STRIKE
+from .probes import choose_follow_up
 from .schemas import (
     ActionLevel,
     BaselineSummary,
@@ -786,6 +787,7 @@ def assess(
     baseline: BaselineSummary,
     flags: list[RedFlag],
     ladder_level: ActionLevel,
+    language: str = "en",
 ) -> RiskAssessment:
     """Rank what this could be, with a number and an action for each."""
     metrics = outcome_model.status()
@@ -889,6 +891,10 @@ def assess(
         ),
         model_tokens=tokens,
         ladder_floor=ladder_level,
+        follow_up=choose_follow_up(
+            concerns,
+            language,
+        ),
         ladder_note=(
             "These percentages explain and rank. They never lower the "
             "recommendation -- the red-flag rules set the floor and the action "

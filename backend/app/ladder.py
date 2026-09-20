@@ -162,7 +162,14 @@ def evaluate(
     # What this could be, with a number on each and the action that number
     # earns. Runs after the rung is settled: it explains and ranks, and the
     # action it shows can only ever be the more urgent of the two.
-    risk = assess_risk(checkin, senior, baseline, flags, level)
+    risk = assess_risk(
+        checkin,
+        senior,
+        baseline,
+        flags,
+        level,
+        language=language or senior.preferred_language,
+    )
     if risk.concerns:
         wanted = max(int(c.action_level) for c in risk.concerns)
         if wanted > int(level):
