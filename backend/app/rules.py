@@ -163,11 +163,32 @@ def _worst_headache(c: CheckIn, s: Senior, text: str) -> list[str]:
                               "sudden headache"])
 
 
+def _back_pain_emergency(c: CheckIn, s: Senior, text: str) -> list[str]:
+    if "back pain" not in _labels(c):
+        return []
+    return _any_phrase(text, [
+        "leg weakness", "weak legs", "numbness", "numb legs",
+        "loss of bladder control", "can't control my bladder",
+        "cant control my bladder", "loss of bowel control",
+        "fell and hurt my back", "hit my back",
+    ])
+
+
+def _back_pain_concerning(c: CheckIn, s: Senior, text: str) -> list[str]:
+    if "back pain" not in _labels(c):
+        return []
+    symptom = next(x for x in c.symptoms if x.label == "back pain")
+    if symptom.severity is not None and symptom.severity >= 8:
+        return [f"severity:{symptom.severity}"]
+    return _any_phrase(text, ["severe back pain", "unbearable back pain", "worst back pain"])
+
+
 RULES: list[Rule] = [
     Rule("stroke_fast", "Possible stroke (FAST signs)", ActionLevel.CALL_911, _stroke),
     Rule("breathing_distress", "Respiratory distress", ActionLevel.CALL_911, _breathing),
     Rule("severe_bleeding", "Significant bleeding", ActionLevel.CALL_911, _severe_bleeding),
     Rule("worst_headache", "Sudden worst-ever headache", ActionLevel.CALL_911, _worst_headache),
+    Rule("back_pain_emergency", "Back pain with a neurological or injury warning", ActionLevel.GO_TO_ER, _back_pain_emergency),
     Rule("cardiac_acs", "Possible cardiac event (incl. atypical presentation)",
          ActionLevel.GO_TO_ER, _cardiac),
     Rule("altered_mental_status", "New confusion / possible delirium",
@@ -179,6 +200,7 @@ RULES: list[Rule] = [
          ActionLevel.GO_TO_ER, _sepsis_ish),
     Rule("vitals_out_of_range", "Vital sign outside safe range", ActionLevel.CALL_CLINIC,
          _hypertensive_or_hypo),
+    Rule("severe_back_pain", "Severe back pain", ActionLevel.CALL_CLINIC, _back_pain_concerning),
 ]
 
 

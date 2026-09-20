@@ -266,6 +266,24 @@ def test_level_one_acknowledges_a_nonurgent_symptom(client):
     assert "back pain" in body["evaluation"]["explanation"].lower()
 
 
+def test_severe_back_pain_raises_to_clinic(client):
+    body = client.post(
+        "/checkins",
+        json={"senior_id": "sen_walter", "language": "en", "text": "I have really bad back pain, 9 out of 10."},
+    ).json()
+    assert body["evaluation"]["level"] == ActionLevel.CALL_CLINIC
+    assert any(flag["code"] == "severe_back_pain" for flag in body["evaluation"]["red_flags"])
+
+
+def test_back_pain_with_leg_weakness_raises_to_er(client):
+    body = client.post(
+        "/checkins",
+        json={"senior_id": "sen_walter", "language": "en", "text": "I have back pain and leg weakness."},
+    ).json()
+    assert body["evaluation"]["level"] >= ActionLevel.GO_TO_ER
+    assert any(flag["code"] == "back_pain_emergency" for flag in body["evaluation"]["red_flags"])
+
+
 # -- baseline, timeline, handoff -------------------------------------------
 def test_baseline_picks_up_the_two_week_drift(client):
     baseline = client.get("/seniors/sen_rosa/baseline").json()

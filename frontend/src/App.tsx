@@ -60,6 +60,27 @@ function displayCheckinText(text: string | undefined, language: string) {
   return presetCheckinText[text || ""]?.[language] || text;
 }
 
+type FollowUpKey = "back-severity" | "back-warning-signs";
+const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
+  "back-severity": {
+    en: "How bad is the back pain from 0 to 10, and did it start suddenly?",
+    es: "\u00bfQu\u00e9 tan fuerte es el dolor de espalda del 0 al 10 y comenz\u00f3 de repente?",
+    pt: "De 0 a 10, qu\u00e3o forte \u00e9 a dor nas costas? Come\u00e7ou de repente?",
+    zh: "\u8170\u80cc\u75bc\u75db\u4ece0到10有多\u75db？是突然开始的吗？",
+    hi: "कमर दर्द 0 से 10 में कितना तेज है? क्या यह अचानक शुरू हुआ?",
+  },
+  "back-warning-signs": {
+    en: "Do you have leg weakness or numbness, trouble walking, or trouble controlling your bladder or bowels?",
+    es: "\u00bfTiene debilidad o adormecimiento en las piernas, dificultad para caminar o para controlar la vejiga o el intestino?",
+    pt: "Voc\u00ea tem fraqueza ou dorm\u00eancia nas pernas, dificuldade para andar ou para controlar a bexiga ou o intestino?",
+    zh: "您的腿是否无力或麻木、走路困难，或无法控制大小便？",
+    hi: "क्या आपके पैरों में कमजोरी या सुन्नपन, चलने में परेशानी, या पेशाब या मल पर नियंत्रण में परेशानी है?",
+  },
+};
+function followUpText(key: FollowUpKey, language: string) {
+  return followUpPrompts[key][language] || followUpPrompts[key].en;
+}
+
 const emptyCarePlan: CarePlan = { routines: [], instructions: [], appointments: [] };
 function savedValue<T>(key: string): T | null {
   try {
@@ -581,6 +602,7 @@ function Dashboard({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [listening, setListening] = useState(false);
+  const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
   const [checkinDetails, setCheckinDetails] = useState<Record<string, CheckInResponse>>({});
   const languageLoaded = useRef(false);
@@ -648,6 +670,15 @@ function Dashboard({
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
+      if (followUpKey === "back-severity") {
+        setFollowUpKey("back-warning-signs");
+      } else if (followUpKey === "back-warning-signs") {
+        setFollowUpKey(null);
+      } else if (result.checkin.symptoms.some((symptom) => symptom.label === "back pain")) {
+        setFollowUpKey("back-severity");
+      } else {
+        setFollowUpKey(null);
+      }
       updateMessage("");
     } catch (reason) {
       const detail = reason instanceof Error ? ` ${reason.message}` : "";
@@ -760,6 +791,13 @@ function Dashboard({
             <p>{t("feeling")}</p>
           </div>
           <section className="checkin-card">
+            {followUpKey && (
+              <div className="followup-question" role="status">
+                <p className="eyebrow">One more question</p>
+                <h3>{followUpText(followUpKey, i18n.language)}</h3>
+                <p className="helper-text">Your answer helps us choose the safest next step.</p>
+              </div>
+            )}
             <h2>{t("tell")}</h2>
             <textarea
               value={message}
