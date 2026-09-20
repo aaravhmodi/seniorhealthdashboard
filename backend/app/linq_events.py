@@ -253,13 +253,14 @@ async def answer_help(senior: Senior, chat_id: Optional[str], to: str) -> bool:
 
 
 async def answer_conversation(
-    senior: Senior, chat_id: Optional[str], to: str, category: str = "caregiver concern"
+    senior: Senior, chat_id: Optional[str], to: str,
+    message: str = "", category: str = "caregiver concern",
 ) -> bool:
-    """Answer an unrecognized caregiver message with bounded warmth."""
+    """Answer an unrecognized caregiver message with bounded, contextual warmth."""
     evaluation = store.latest_evaluation(senior.id)
     level = int(evaluation.level) if evaluation else 1
     result_text = llm.caregiver_reply(
-        senior.display_name.split()[0], level, category, circle.detail_link(senior.id)
+        senior.display_name.split()[0], level, category, circle.detail_link(senior.id), message
     )
     result = await (linq.send_to_chat(chat_id, result_text.value) if chat_id
                     else linq.send_direct(to, result_text.value))
