@@ -184,6 +184,74 @@ class RedFlag(BaseModel):
     forces_level: ActionLevel
 
 
+class RiskDriver(BaseModel):
+    """One thing that moved the number, and by how much.
+
+    ``delta_points`` is the honest version of "why": the probability with this
+    driver minus the probability without it, in percentage points. It is not a
+    share of a score, so the drivers do not have to sum to the total.
+    """
+
+    label: str
+    kind: EvidenceKind
+    delta_points: float               # percentage points added (or removed)
+    multiplier: float                 # the odds multiplier applied
+    detail: str
+    source: str
+    fitted: bool = False              # True when the number came from the model
+
+
+class RiskConcern(BaseModel):
+    """A named thing this could be, with a probability and what to do about it."""
+
+    code: str
+    label: str                        # "Bleeding inside the head"
+    plain: str                        # one sentence a patient can read
+    probability_percent: float
+    band: str                         # monitor | today | emergency | now
+    band_label: str
+    action: str                       # what to do at THIS percentage
+    action_level: ActionLevel
+    base_rate_percent: float          # where the number started
+    base_rate_detail: str
+    drivers: list[RiskDriver] = []
+    matched_on: list[str] = []        # what in the check-in triggered it
+
+
+class RiskBand(BaseModel):
+    band: str
+    label: str
+    lower_percent: float
+    upper_percent: float
+    action: str
+    action_level: ActionLevel
+
+
+class RiskAssessment(BaseModel):
+    """Everything the UI needs to show what this could be and why.
+
+    Deliberately separate from ``Evaluation.level``: the ladder is still set by
+    the deterministic rules. These percentages explain and prioritise; they
+    never lower a rung.
+    """
+
+    concerns: list[RiskConcern] = []
+    top_concern: Optional[str] = None
+    overall_percent: Optional[float] = None
+    bands: list[RiskBand] = []
+    # Provenance for the fitted model.
+    model_status: str = "unavailable"
+    model_risk_percent: Optional[float] = None
+    model_auc: Optional[float] = None
+    model_n: Optional[int] = None
+    model_years: list[str] = []
+    model_holdout_years: list[str] = []
+    model_basis: str = ""
+    model_tokens: list[str] = []      # what in the words the model keyed on
+    ladder_floor: Optional[ActionLevel] = None
+    ladder_note: str = ""
+
+
 class Evaluation(BaseModel):
     id: str
     checkin_id: str
@@ -208,6 +276,7 @@ class Evaluation(BaseModel):
     context_citations: list[str] = []
     model_risk: Optional[float] = None
     under_triage: bool = False
+    risk: Optional[RiskAssessment] = None
 
 
 class NotificationReceipt(BaseModel):

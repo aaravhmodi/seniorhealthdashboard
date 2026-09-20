@@ -22,6 +22,7 @@ from .schemas import (
     LEVEL_LABELS,
     Senior,
 )
+from .risk import assess as assess_risk
 from .rules import evaluate_rules, rule_floor
 from .store import new_id, now
 
@@ -118,6 +119,15 @@ def evaluate(
         level = ActionLevel(int(level) + 1)
         escalated = True
 
+    # What this could be, with a number on each and the action that number
+    # earns. Runs after the rung is settled: it explains and ranks, and the
+    # action it shows can only ever be the more urgent of the two.
+    risk = assess_risk(checkin, senior, baseline, flags, level)
+    if risk.concerns:
+        wanted = max(int(c.action_level) for c in risk.concerns)
+        if wanted > int(level):
+            level = ActionLevel(wanted)
+
     explanation, explanation_en = render_explanation(
         level=level,
         language=language or senior.preferred_language,
@@ -150,4 +160,5 @@ def evaluate(
         engine_version=ENGINE_VERSION,
         model_risk=model_risk,
         under_triage=under_triage,
+        risk=risk,
     )

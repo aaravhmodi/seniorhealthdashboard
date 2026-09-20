@@ -142,6 +142,37 @@ def predict(checkin: CheckIn, senior: Senior) -> float | None:
     return round(float(model.predict_proba(vectorizer.transform([_feature_text(row)]))[0, 1]), 4)
 
 
+def explain_tokens(checkin: CheckIn, senior: Senior, limit: int = 6) -> list[str]:
+    """The words in this check-in the fitted model actually leaned on.
+
+    Contribution per term is ``tfidf_value * coefficient`` -- for a linear model
+    on a TF-IDF matrix that is the exact additive contribution to the log-odds,
+    not a post-hoc guess. Only terms that push the risk UP are returned: a list
+    of what made the model worried is the part a clinician can check.
+    """
+    fitted, _ = runtime_model()
+    if not fitted:
+        return []
+    vectorizer, model = fitted
+    row = {
+        "narrative": checkin.raw_text or "",
+        "age": senior.age,
+        "sex": "",
+        "location": "",
+        "product": "",
+        "body_part_code": "",
+    }
+    x = vectorizer.transform([_feature_text(row)])
+    names = vectorizer.get_feature_names_out()
+    coefs = model.coef_[0]
+    scored = [
+        (float(x[0, j] * coefs[j]), str(names[j]))
+        for j in x.nonzero()[1]
+    ]
+    scored.sort(reverse=True)
+    return [term for weight, term in scored[:limit] if weight > 0]
+
+
 def card(checkin: CheckIn, senior: Senior, level: ActionLevel) -> tuple[EvidenceCard, float] | None:
     risk = predict(checkin, senior)
     if risk is None:
