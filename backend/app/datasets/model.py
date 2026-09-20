@@ -142,6 +142,28 @@ def predict(checkin: CheckIn, senior: Senior) -> float | None:
     return round(float(model.predict_proba(vectorizer.transform([_feature_text(row)]))[0, 1]), 4)
 
 
+# Terms the model genuinely leans on but that tell a reader nothing. They are
+# real contributions -- we are not hiding them from the arithmetic, only from a
+# list headed "what it keyed on in your words", where "my" beside "fell" reads
+# as noise and costs the honest terms their credibility.
+_UNINFORMATIVE = {
+    "a", "about", "after", "an", "and", "are", "as", "at", "be", "been", "but",
+    "by", "for", "from", "had", "has", "have", "her", "here", "his", "i", "in",
+    "is", "it", "its", "me", "my", "of", "on", "or", "our", "she", "so", "that",
+    "the", "their", "then", "there", "they", "this", "to", "up", "was", "were",
+    "when", "with", "you", "your",
+}
+
+
+def _informative(term: str) -> bool:
+    """A term earns a place in the list if any part of it carries meaning."""
+    words = term.split()
+    return any(
+        word not in _UNINFORMATIVE and not word.isdigit() and len(word) > 2
+        for word in words
+    )
+
+
 def explain_tokens(checkin: CheckIn, senior: Senior, limit: int = 6) -> list[str]:
     """The words in this check-in the fitted model actually leaned on.
 
@@ -170,7 +192,21 @@ def explain_tokens(checkin: CheckIn, senior: Senior, limit: int = 6) -> list[str
         for j in x.nonzero()[1]
     ]
     scored.sort(reverse=True)
-    return [term for weight, term in scored[:limit] if weight > 0]
+    # The vectorizer carries unigrams and bigrams, so "bathroom", "the
+    # bathroom" and "bathroom this" all score and all say the same thing.
+    # Keep the strongest of each overlapping family: six distinct ideas beat
+    # six spellings of two.
+    kept: list[str] = []
+    for weight, term in scored:
+        if weight <= 0 or not _informative(term):
+            continue
+        words = set(term.split())
+        if any(words & set(other.split()) for other in kept):
+            continue
+        kept.append(term)
+        if len(kept) == limit:
+            break
+    return kept
 
 
 def card(checkin: CheckIn, senior: Senior, level: ActionLevel) -> tuple[EvidenceCard, float] | None:

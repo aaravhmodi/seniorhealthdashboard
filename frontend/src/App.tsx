@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
+  ChevronDown,
   Download,
   Globe2,
   HeartPulse,
@@ -14,7 +15,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -694,6 +695,221 @@ function Profile({
   );
 }
 
+// -- What this could be ----------------------------------------------------
+// The dashboard used to say "go to the emergency department" without saying
+// what it thought this was or how sure it was. This panel answers both, and
+// ties each percentage to the action that percentage earns.
+//
+// One rule holds the whole thing together: every bar is drawn on the SAME
+// 0-100 axis as the band strip at the top, so where a concern lands is
+// visibly why it got the action it got. Nothing here is a decorative meter.
+
+const BAND_TONE: Record<string, string> = {
+  monitor: "calm", today: "watch", emergency: "urgent", now: "critical",
+};
+
+function DriverRow({ driver, widest }: { driver: RiskDriver; widest: number }) {
+  const magnitude = Math.abs(driver.delta_points);
+  return (
+    <div className={`driver-row ${driver.delta_points < 0 ? "lowers" : ""}`}>
+      <div className="driver-head">
+        <span className="driver-label">{driver.label}</span>
+        <strong className="driver-delta">
+          {driver.delta_points >= 0 ? "+" : "\u2212"}{magnitude.toFixed(1)} pts
+        </strong>
+      </div>
+      <div className="driver-track" aria-hidden="true">
+        <div style={{ width: `${widest ? (magnitude / widest) * 100 : 0}%` }} />
+      </div>
+      <p className="driver-detail">{driver.detail}</p>
+      <p className="driver-source">
+        <span className={`driver-badge ${driver.fitted ? "fitted" : "chosen"}`}>
+          {driver.fitted ? "measured" : "clinical weighting"}
+        </span>
+        {driver.source}
+      </p>
+    </div>
+  );
+}
+
+function ConcernCard({ concern, open, onToggle }: {
+  concern: RiskConcern; open: boolean; onToggle: () => void;
+}) {
+  const widest = Math.max(1, ...concern.drivers.map((driver) => Math.abs(driver.delta_points)));
+  const detailId = `concern-why-${concern.code}`;
+  return (
+    <article className={`concern-card ${BAND_TONE[concern.band] || "calm"}`}>
+      <div className="concern-top">
+        <div className="concern-name">
+          <h4>{concern.label}</h4>
+          <p>{concern.plain}</p>
+        </div>
+        <div className="concern-figure">
+          <strong>{concern.probability_percent.toFixed(0)}<small>%</small></strong>
+          <span>{concern.band_label}</span>
+        </div>
+      </div>
+      <div className="concern-meter" aria-hidden="true">
+        <div className="concern-meter-fill" style={{ width: `${concern.probability_percent}%` }} />
+        <div className="concern-meter-base" style={{ left: `${concern.base_rate_percent}%` }} />
+      </div>
+      <p className="concern-scale-note">
+        Starts at {concern.base_rate_percent.toFixed(0)}% for someone your age with this complaint
+        {concern.drivers.length > 0 && <>, then moves to {concern.probability_percent.toFixed(0)}% on what you told us</>}
+      </p>
+      <p className="concern-action">
+        <strong>At {concern.probability_percent.toFixed(0)}%:</strong> {concern.action}
+      </p>
+      <button
+        type="button"
+        className="concern-toggle"
+        aria-expanded={open}
+        aria-controls={detailId}
+        onClick={onToggle}
+      >
+        <ChevronDown size={16} className={open ? "rotated" : ""} />
+        {open ? "Hide the working" : "Why this number?"}
+      </button>
+      {open && (
+        <div className="concern-why" id={detailId}>
+          <div className="why-block">
+            <h5>What raised it at all</h5>
+            <ul className="matched-list">
+              {concern.matched_on.map((match) => <li key={match}>{match}</li>)}
+            </ul>
+          </div>
+          <div className="why-block">
+            <h5>Where the number started</h5>
+            <p>{concern.base_rate_detail}</p>
+          </div>
+          {concern.drivers.length > 0 && (
+            <div className="why-block">
+              <h5>What moved it, and by how much</h5>
+              <div className="driver-list">
+                {concern.drivers.map((driver) => (
+                  <DriverRow key={driver.label} driver={driver} widest={widest} />
+                ))}
+              </div>
+              <p className="driver-caveat">
+                Each figure is this check-in&rsquo;s percentage with that piece of
+                evidence minus the percentage without it. They are not slices of a
+                pie, so they do not add up to the total.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function RiskPanel({ risk }: { risk: RiskAssessment }) {
+  const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
+  const [showModel, setShowModel] = useState(false);
+  if (!risk.concerns.length) return null;
+  const top = risk.concerns[0];
+  const others = risk.concerns.length - 1;
+
+  return (
+    <section className="risk-panel" aria-labelledby="risk-title">
+      <div className="risk-heading">
+        <div>
+          <p className="eyebrow">What this could be</p>
+          <h2 id="risk-title">
+            {top.label}
+            {others > 0 && <span className="risk-others">, and {others} other thing{others === 1 ? "" : "s"} worth naming</span>}
+          </h2>
+          <p className="risk-sub">
+            Each percentage is how often a presentation like yours ended in
+            hospital rather than being sent home, adjusted for your age, your
+            medicines and what you told us today.
+          </p>
+        </div>
+        <div className={`risk-headline ${BAND_TONE[top.band] || "calm"}`}>
+          <strong>{top.probability_percent.toFixed(0)}<small>%</small></strong>
+          <span>{top.band_label}</span>
+        </div>
+      </div>
+
+      <div className="band-strip">
+        <div className="band-track">
+          {risk.bands.map((band) => (
+            <div
+              key={band.band}
+              className={`band-zone ${BAND_TONE[band.band]}`}
+              style={{ width: `${band.upper_percent - band.lower_percent}%` }}
+            >
+              <span>{band.label}</span>
+            </div>
+          ))}
+          <div className="band-marker" style={{ left: `${top.probability_percent}%` }} aria-hidden="true" />
+        </div>
+        <div className="band-ticks">
+          {risk.bands.map((band) => (
+            <span key={band.band} style={{ left: `${band.lower_percent}%` }}>{band.lower_percent}%</span>
+          ))}
+          <span style={{ left: "100%" }}>100%</span>
+        </div>
+      </div>
+
+      <div className="concern-list">
+        {risk.concerns.map((concern) => (
+          <ConcernCard
+            key={concern.code}
+            concern={concern}
+            open={openCode === concern.code}
+            onToggle={() => setOpenCode(openCode === concern.code ? null : concern.code)}
+          />
+        ))}
+      </div>
+
+      <div className="risk-provenance">
+        {risk.model_risk_percent !== undefined && risk.model_risk_percent !== null && (
+          <p className="model-headline">
+            The trained model reads this check-in at{" "}
+            <strong>{risk.model_risk_percent.toFixed(0)}%</strong> overall risk of
+            needing admission or observation.
+          </p>
+        )}
+        <button
+          type="button"
+          className="concern-toggle"
+          aria-expanded={showModel}
+          onClick={() => setShowModel(!showModel)}
+        >
+          <ChevronDown size={16} className={showModel ? "rotated" : ""} />
+          How that model was trained
+        </button>
+        {showModel && (
+          <div className="model-detail">
+            <p>{risk.model_basis}</p>
+            <div className="model-stats">
+              {risk.model_n ? <div><span>Training records</span><strong>{risk.model_n.toLocaleString()}</strong></div> : null}
+              {risk.model_years.length ? <div><span>Years</span><strong>{risk.model_years.join(", ")}</strong></div> : null}
+              {risk.model_auc ? <div><span>Held-out AUC</span><strong>{risk.model_auc.toFixed(3)}</strong></div> : null}
+              {risk.model_holdout_years.length ? <div><span>Tested on</span><strong>{risk.model_holdout_years.join(", ")}</strong></div> : null}
+            </div>
+            {risk.model_tokens.length > 0 && (
+              <>
+                <h5>What it keyed on in your words</h5>
+                <ul className="token-list">
+                  {risk.model_tokens.map((token) => <li key={token}>{token}</li>)}
+                </ul>
+                <p className="driver-caveat">
+                  These are the terms with the largest positive contribution to
+                  this score, read straight off the fitted model &mdash; not a
+                  guess about what it might have used.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+        <p className="risk-ladder-note">{risk.ladder_note}</p>
+      </div>
+    </section>
+  );
+}
+
 function checkinWellnessScore(checkin: CheckIn) {
   const symptoms = checkin.symptoms || [];
   const averageSeverity = symptoms.length ? symptoms.reduce((total, symptom) => total + (symptom.severity ?? 2), 0) / symptoms.length : 0;
@@ -763,9 +979,11 @@ function Dashboard({
   const [followUpForId, setFollowUpForId] = useState<string | null>(null);
   const [followUpRecords, setFollowUpRecords] = useState<Record<string, FollowUpRecord[]>>(() => savedValue<Record<string, FollowUpRecord[]>>(`carepath-followups:${senior.id}`) || {});
   const [downloadingHandoff, setDownloadingHandoff] = useState(false);
-  const reminderKind = "meds";
+  const [reminderKind, setReminderKind] = useState<"meds" | "appointment" | "refill" | "caregiver_update">("meds");
   const [reminderMedicationId, setReminderMedicationId] = useState("");
   const [reminderRecipient, setReminderRecipient] = useState<"self" | "caregiver" | "both">("self");
+  const [reminderAt, setReminderAt] = useState("");
+  const [scheduledReminders, setScheduledReminders] = useState<ReminderJob[]>([]);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState("");
   const [expandedCheckin, setExpandedCheckin] = useState<string | null>(null);
@@ -796,6 +1014,7 @@ function Dashboard({
         await api.createSenior(senior);
         profileRegistered.current = true;
         setCheckins(await api.checkins(senior.id));
+        setScheduledReminders(await api.reminders(senior.id));
       } catch {
         // The dashboard remains available while the local API is offline.
       }
@@ -915,6 +1134,38 @@ function Dashboard({
       setReminderStatus(reason instanceof Error ? reason.message : "Message was not sent.");
     } finally {
       setSendingReminder(false);
+    }
+  };
+  const scheduleReminder = async () => {
+    if (!reminderAt) {
+      setReminderStatus("Choose a date and time for the reminder.");
+      return;
+    }
+    setSendingReminder(true);
+    setReminderStatus("");
+    try {
+      const job = await api.scheduleReminder({
+        senior_id: senior.id,
+        kind: reminderKind,
+        language: i18n.language,
+        recipient: reminderRecipient,
+        scheduled_for: new Date(reminderAt).toISOString(),
+      });
+      setScheduledReminders((current) => [...current, job].sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for)));
+      setReminderAt("");
+      setReminderStatus("Reminder scheduled. It will be sent to the selected phone by LINQ.");
+    } catch (reason) {
+      setReminderStatus(reason instanceof Error ? reason.message : "Reminder could not be scheduled.");
+    } finally {
+      setSendingReminder(false);
+    }
+  };
+  const cancelScheduledReminder = async (reminderId: string) => {
+    try {
+      const job = await api.cancelReminder(senior.id, reminderId);
+      setScheduledReminders((current) => current.map((item) => item.id === job.id ? job : item));
+    } catch (reason) {
+      setReminderStatus(reason instanceof Error ? reason.message : "Reminder could not be cancelled.");
     }
   };
   const openCheckin = async (checkin: CheckIn) => {
@@ -1072,6 +1323,7 @@ function Dashboard({
               {evaluation.level >= 3 && <button className="secondary-button" type="button" onClick={() => void downloadHandoff()} disabled={downloadingHandoff}><Download size={18} /> {downloadingHandoff ? "Preparing handoff..." : "Download nurse handoff PDF"}</button>}
             </div>
           </section>}
+          {evaluation?.risk && <RiskPanel risk={evaluation.risk} />}
         </main>
       )}
       {page === "plan" && (
@@ -1104,8 +1356,14 @@ function Dashboard({
               <p className="helper-text">{t("reminderDescription")}</p>
             </div>
             <div className="reminder-actions">
+              <label className="sr-only" htmlFor="reminder-kind">Reminder type</label>
+              <select id="reminder-kind" value={reminderKind} onChange={(event) => setReminderKind(event.target.value as typeof reminderKind)}>
+                <option value="meds">Medication</option>
+                <option value="appointment">Appointment</option>
+                <option value="refill">Refill</option>
+              </select>
               <label className="sr-only" htmlFor="reminder-medication">{t("medications")}</label>
-              <select id="reminder-medication" value={reminderMedicationId || senior.medications[0]?.id || ""} onChange={(event) => setReminderMedicationId(event.target.value)} disabled={!senior.medications.length}>
+              <select id="reminder-medication" value={reminderMedicationId || senior.medications[0]?.id || ""} onChange={(event) => setReminderMedicationId(event.target.value)} disabled={!senior.medications.length || reminderKind !== "meds"}>
                 {senior.medications.length ? senior.medications.map((medication) => <option key={medication.id} value={medication.id}>{medication.name}</option>) : <option value="">Add a medication in your profile</option>}
               </select>
               <label className="sr-only" htmlFor="reminder-recipient">{t("reminderRecipient")}</label>
@@ -1114,11 +1372,23 @@ function Dashboard({
                 <option value="caregiver" disabled={!senior.caregivers?.[0]}>{t("caregiver")}</option>
                 <option value="both" disabled={!senior.caregivers?.[0]}>{t("meAndCaregiver")}</option>
               </select>
-              <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || !senior.medications.length}>
+              <button className="secondary-button" type="button" onClick={() => void sendReminder()} disabled={sendingReminder || (reminderKind === "meds" && !senior.medications.length)}>
                 {sendingReminder ? "Sending..." : t("sendText")}
+              </button>
+              <label className="sr-only" htmlFor="reminder-at">Reminder date and time</label>
+              <input id="reminder-at" type="datetime-local" value={reminderAt} min={new Date(Date.now() + 60000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)} onChange={(event) => setReminderAt(event.target.value)} />
+              <button className="primary-button" type="button" onClick={() => void scheduleReminder()} disabled={sendingReminder || !reminderAt || (reminderKind === "meds" && !senior.medications.length)}>
+                {sendingReminder ? "Scheduling..." : "Schedule"}
               </button>
             </div>
             {reminderStatus && <p className="form-success" role="status">{reminderStatus}</p>}
+            {scheduledReminders.length > 0 && <div className="scheduled-reminders">
+              <h3>Scheduled reminders</h3>
+              {scheduledReminders.map((job) => <div className="scheduled-reminder" key={job.id}>
+                <span><strong>{job.kind === "meds" ? "Medication" : job.kind === "appointment" ? "Appointment" : "Refill"}</strong> · {new Date(job.scheduled_for).toLocaleString()} · {job.recipient}</span>
+                {job.status === "scheduled" ? <button className="text-button" type="button" onClick={() => void cancelScheduledReminder(job.id)}>Cancel</button> : <small>{job.status}</small>}
+              </div>)}
+            </div>}
           </section>
         </main>
       )}

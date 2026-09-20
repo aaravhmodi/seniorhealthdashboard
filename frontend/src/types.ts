@@ -14,6 +14,32 @@ export interface Evaluation {
   level: ActionLevel; level_label: string; explanation: string; explanation_en?: string
   recommended_actions: string[]; confidence: number; red_flags: { label: string; matched_on?: string[]; forces_level?: ActionLevel }[]
   evidence?: EvidenceCard[]; requires_human_review?: boolean; model_risk?: number
+  risk?: RiskAssessment
+}
+// -- What this could be, with a number on it -------------------------------
+// `delta_points` is the honest version of "why": the probability with this
+// driver minus the probability without it. The drivers do not sum to the
+// total, and the UI must not pretend they do.
+export interface RiskDriver {
+  label: string; kind: string; delta_points: number; multiplier: number
+  detail: string; source: string; fitted: boolean
+}
+export interface RiskConcern {
+  code: string; label: string; plain: string; probability_percent: number
+  band: RiskBandName; band_label: string; action: string; action_level: ActionLevel
+  base_rate_percent: number; base_rate_detail: string
+  drivers: RiskDriver[]; matched_on: string[]
+}
+export type RiskBandName = 'monitor' | 'today' | 'emergency' | 'now'
+export interface RiskBand {
+  band: RiskBandName; label: string; lower_percent: number; upper_percent: number
+  action: string; action_level: ActionLevel
+}
+export interface RiskAssessment {
+  concerns: RiskConcern[]; top_concern?: string; overall_percent?: number; bands: RiskBand[]
+  model_status: string; model_risk_percent?: number; model_auc?: number; model_n?: number
+  model_years: string[]; model_holdout_years: string[]; model_basis: string
+  model_tokens: string[]; ladder_floor?: ActionLevel; ladder_note: string
 }
 export interface EvidenceCard {
   kind: string; title: string; detail: string; source: string; weight?: number

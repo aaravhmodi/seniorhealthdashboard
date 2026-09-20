@@ -69,6 +69,11 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .handoff-summary p { margin: .35rem 0; }
 .reminder-actions { display: flex; align-items: center; gap: .65rem; flex-shrink: 0; }
 .reminder-actions select { border: 1px solid #cbd9d1; border-radius: 9px; padding: .7rem .8rem; background: #fff; }
+.reminder-actions input { border: 1px solid #cbd9d1; border-radius: 9px; padding: .7rem .8rem; background: #fff; min-height: 50px; }
+.scheduled-reminders { flex-basis: 100%; border-top: 1px solid #e6eee8; padding-top: .85rem; display: grid; gap: .45rem; }
+.scheduled-reminders h3 { margin: 0; color: #385d4f; font-size: .85rem; }
+.scheduled-reminder { display: flex; align-items: center; justify-content: space-between; gap: .75rem; color: #526f62; font-size: .82rem; }
+.scheduled-reminder small { color: #73897f; text-transform: capitalize; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .form-success { color: #286e55; font-size: .85rem; margin: .7rem 0 0; }
 @media (max-width: 720px) { .reminder-card { align-items: stretch; flex-direction: column; }.reminder-actions { flex-direction: column; align-items: stretch; }.reminder-actions select, .reminder-actions .secondary-button { width: 100%; justify-content: center; } }
@@ -171,3 +176,107 @@ input, textarea, select { font-size: 1rem; min-height: 50px; }.primary-button, .
 .caregiver-foot { padding: 0 4px; }
 .caregiver-foot p { display: flex; align-items: flex-start; gap: 8px; font-size: .85rem; line-height: 1.5; }
 @media (max-width: 480px) { .status-card h1 { font-size: 1.4rem; } .caregiver-card { padding: 16px; } }
+
+/* -- What this could be: concerns, percentages, and the working ----------- */
+/* Band tones are shared by the strip, the headline and every concern card,
+   so a colour always means the same action wherever it appears. */
+.risk-panel { margin-top: 1.65rem; border: 1px solid #dce8df; border-radius: 18px; background: #fff; padding: clamp(1.2rem, 3vw, 1.8rem); }
+.risk-heading { display: flex; gap: 1.2rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.risk-heading > div:first-child { flex: 1 1 320px; }
+.risk-heading h2 { font-size: 1.5rem; line-height: 1.25; margin: .2rem 0 .55rem; color: #18352d; }
+.risk-others { color: #5c7a6d; font-weight: 500; }
+.risk-sub { max-width: 620px; color: #55705f; font-size: .87rem; line-height: 1.55; margin: 0; }
+.risk-headline { flex: 0 0 auto; text-align: center; border-radius: 14px; padding: .8rem 1.1rem; min-width: 118px; }
+.risk-headline strong { display: block; font-size: 2.7rem; line-height: 1; letter-spacing: -.06em; }
+.risk-headline strong small { font-size: 1.1rem; letter-spacing: 0; }
+.risk-headline span { display: block; font-size: .74rem; font-weight: 700; margin-top: .35rem; text-transform: uppercase; letter-spacing: .04em; }
+.risk-headline.calm { background: #e9f6ee; color: #1e6048; }
+.risk-headline.watch { background: #fdf3de; color: #8a5c0a; }
+.risk-headline.urgent { background: #fbeae3; color: #a8501f; }
+.risk-headline.critical { background: #fae9e8; color: #a13d38; }
+
+/* The band table, drawn once. Every concern bar below reads against it. */
+.band-strip { margin: 1.4rem 0 .4rem; }
+.band-track { position: relative; display: flex; height: 30px; border-radius: 8px; overflow: hidden; }
+.band-zone { display: grid; place-items: center; font-size: .68rem; font-weight: 700; letter-spacing: .02em; overflow: hidden; }
+.band-zone span { padding: 0 .3rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.band-zone.calm { background: #dcefe3; color: #1e6048; }
+.band-zone.watch { background: #f9e7c4; color: #85590a; }
+.band-zone.urgent { background: #f5d8c9; color: #9c4a1c; }
+.band-zone.critical { background: #f3d3d1; color: #9b3a35; }
+.band-marker { position: absolute; top: -4px; bottom: -4px; width: 3px; background: #18352d; border-radius: 3px; transform: translateX(-50%); box-shadow: 0 0 0 2px #fff; }
+.band-ticks { position: relative; height: 1.1rem; margin-top: .3rem; }
+.band-ticks span { position: absolute; transform: translateX(-50%); font-size: .68rem; color: #7d9186; }
+.band-ticks span:first-child { transform: none; }
+.band-ticks span:last-child { transform: translateX(-100%); }
+
+.concern-list { display: grid; gap: .85rem; margin-top: 1.25rem; }
+.concern-card { border: 1px solid #e2ebe4; border-left-width: 4px; border-radius: 13px; padding: 1rem 1.1rem; background: #fcfdfb; }
+.concern-card.calm { border-left-color: #43816b; }
+.concern-card.watch { border-left-color: #d89b2c; }
+.concern-card.urgent { border-left-color: #d1743f; }
+.concern-card.critical { border-left-color: #c84d48; }
+.concern-top { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; }
+.concern-name h4 { font-size: 1.08rem; margin: 0 0 .3rem; color: #18352d; }
+.concern-name p { margin: 0; font-size: .84rem; line-height: 1.5; color: #56705f; max-width: 54ch; }
+.concern-figure { text-align: right; white-space: nowrap; }
+.concern-figure strong { display: block; font-size: 1.9rem; line-height: 1; letter-spacing: -.05em; color: #18352d; }
+.concern-figure strong small { font-size: .9rem; letter-spacing: 0; color: #5c7a6d; }
+.concern-figure span { font-size: .7rem; font-weight: 700; color: #6b8478; text-transform: uppercase; letter-spacing: .03em; }
+
+/* Same 0-100 axis as .band-track above: the position IS the explanation. */
+.concern-meter { position: relative; height: 9px; border-radius: 99px; background: #e8efe9; margin: .85rem 0 .45rem; overflow: visible; }
+.concern-meter-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #56a081, #d89b2c 45%, #c84d48); }
+.concern-meter-base { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #7d9186; transform: translateX(-50%); }
+.concern-scale-note { font-size: .74rem; color: #7d9186; margin: 0 0 .7rem; }
+.concern-action { font-size: .9rem; line-height: 1.5; color: #2c5546; margin: 0 0 .6rem; }
+.concern-action strong { color: #18352d; }
+
+.concern-toggle { display: inline-flex; align-items: center; gap: .35rem; background: none; border: 0; padding: 0; font: inherit; font-size: .8rem; font-weight: 700; color: #2b6c53; cursor: pointer; }
+.concern-toggle:hover { text-decoration: underline; }
+.concern-toggle svg { transition: transform .15s ease; }
+.concern-toggle svg.rotated { transform: rotate(180deg); }
+
+.concern-why { margin-top: .9rem; padding-top: .9rem; border-top: 1px dashed #dce8df; display: grid; gap: 1rem; }
+.why-block h5 { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: #6b8478; margin: 0 0 .45rem; }
+.why-block > p { font-size: .82rem; line-height: 1.55; color: #4c6a5c; margin: 0; }
+.matched-list { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; }
+.matched-list li { background: #eef5ef; border-radius: 99px; padding: .28rem .65rem; font-size: .78rem; color: #2c5546; }
+
+.driver-list { display: grid; gap: .85rem; }
+.driver-row { display: grid; gap: .3rem; }
+.driver-head { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; }
+.driver-label { font-size: .86rem; font-weight: 700; color: #234c3d; }
+.driver-delta { font-size: .86rem; color: #a8501f; white-space: nowrap; }
+.driver-row.lowers .driver-delta { color: #2b6c53; }
+.driver-track { height: 6px; border-radius: 99px; background: #edf2ee; }
+.driver-track > div { height: 100%; border-radius: 99px; background: #d1743f; }
+.driver-row.lowers .driver-track > div { background: #56a081; }
+.driver-detail { font-size: .8rem; line-height: 1.5; color: #55705f; margin: .15rem 0 0; }
+.driver-source { font-size: .72rem; color: #7d9186; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.driver-badge { border-radius: 99px; padding: .13rem .45rem; font-weight: 700; font-size: .66rem; text-transform: uppercase; letter-spacing: .04em; }
+.driver-badge.fitted { background: #e3f0e8; color: #1e6048; }
+.driver-badge.chosen { background: #f1f0e6; color: #7a6a33; }
+.driver-caveat { font-size: .73rem; line-height: 1.5; color: #7d9186; margin: .7rem 0 0; }
+
+.risk-provenance { margin-top: 1.35rem; padding-top: 1.1rem; border-top: 1px solid #e6efe8; }
+.model-headline { font-size: .88rem; color: #3c6152; margin: 0 0 .55rem; }
+.model-headline strong { color: #18352d; }
+.model-detail { margin-top: .8rem; background: #f5f8f5; border-radius: 12px; padding: 1rem; }
+.model-detail > p { font-size: .82rem; line-height: 1.6; color: #4c6a5c; margin: 0; }
+.model-detail h5 { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: #6b8478; margin: 1rem 0 .45rem; }
+.model-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .6rem; margin-top: .9rem; }
+.model-stats div { background: #fff; border-radius: 9px; padding: .6rem .7rem; }
+.model-stats span { display: block; font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: #7d9186; }
+.model-stats strong { font-size: 1rem; color: #1e6048; }
+.token-list { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; }
+.token-list li { background: #fff; border: 1px solid #dce8df; border-radius: 6px; padding: .22rem .5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; color: #2c5546; }
+.risk-ladder-note { font-size: .74rem; line-height: 1.55; color: #7d9186; margin: 1rem 0 0; }
+
+@media (max-width: 640px) {
+  .risk-heading { flex-direction: column; }
+  .risk-headline { align-self: stretch; }
+  .concern-top { flex-direction: column; }
+  .concern-figure { text-align: left; }
+  .band-zone span { font-size: .6rem; }
+}
