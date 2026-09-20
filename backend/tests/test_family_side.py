@@ -94,6 +94,13 @@ def test_every_family_message_carries_a_link_and_no_phi():
         assert not linq.contains_phi(body)
 
 
+def test_status_reply_is_concrete_and_does_not_assign_an_unnamed_caller():
+    body = caretone.status_reply_body("Rosa", 2, "earlier today", "https://carepath.test/c/sen_rosa")
+    assert "Someone should make that call" not in body
+    assert "Please call the clinic today" in body
+    assert "Rosa" not in body
+
+
 def test_the_transport_refuses_a_body_with_clinical_detail():
     """Last gate before bytes leave: even a hand-rolled body is stopped."""
     assert linq.contains_phi("Rosa has chest pain, go to the ER")

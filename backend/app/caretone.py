@@ -85,7 +85,7 @@ REGISTERS: dict[int, Register] = {
         warning_shot="a small update",
         status="checked in, and something is worth a call to the clinic today",
         empathy="Likely manageable, and better handled today than Monday",
-        ask="Someone should make that call",
+        ask="Please call the clinic today; reply CALL to request a nurse call",
         reply_hint="Tap back so we know you saw this",
     ),
     3: Register(
@@ -269,7 +269,7 @@ def status_reply_body(first_name: str, level: int, when: str, link: str) -> str:
     """
     reg = REGISTERS[int(level)]
     body = _join(
-        f"I hear you. {first_name} checked in, and we are keeping an eye on things",
+        f"Latest update: they {reg.status}",
         f"The last update was {when}",
         reg.ask if int(level) > 1 else "Reply HELP if you want to talk it through",
     )
