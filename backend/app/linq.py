@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
@@ -31,10 +32,19 @@ import httpx
 
 from .config import get_settings
 
-# The tapbacks we count as "I have seen this and I am on it". iMessage has no
-# checkmark tapback of its own; on iOS 18+ Linq passes through emoji reactions,
-# so an actual check mark arrives as its own reaction_type.
-ACK_REACTIONS = {"like", "love", "emphasize", "check", "checkmark", "✅", "\U0001f44d"}
+# Linq's built-in tapback types. Anything else is sent as a `custom` tapback
+# carrying the emoji itself, which is how a check mark becomes a tapback at all
+# -- iMessage has no check mark of its own.
+BUILTIN_REACTIONS = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+
+# The tapbacks we count as "I have seen this and I am on it". A dislike or a
+# question mark is deliberately not here: those mean the caregiver saw it and
+# is *not* satisfied, which is the opposite of an acknowledgement and must
+# keep the escalation clock running.
+ACK_REACTIONS = {
+    "like", "love", "emphasize",
+    "check", "checkmark", "✅", "✔", "\U0001f44d", "\U0001f44c",
+}
 
 # Mirrors notify._BANNED_SUBSTRINGS. Duplicated on purpose: this is the last
 # gate before bytes leave the building, and it should not depend on the caller
@@ -88,6 +98,30 @@ def text_parts(body: str) -> list[dict[str, str]]:
     return [{"type": "text", "value": body}]
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def split_link(body: str) -> tuple[str, Optional[str]]:
+    """Separate a body from the link it carries.
+
+    Linq rejects the *first* outbound message to a new chat if it contains a
+    URL (400, error code 1005) -- an anti-spam rule, and a reasonable one. But
+    every message we compose carries a link, because the link is where the
+    detail that may not go in an SMS lives. So an opening send goes out in two
+    parts: the words, then the link as an immediate follow-up into the chat we
+    just created.
+    """
+    match = _URL_RE.search(body)
+    if not match:
+        return body.strip(), None
+    url = match.group(0).rstrip(".,")
+    stripped = _URL_RE.sub("", body)
+    stripped = re.sub(r"\s+", " ", stripped).replace(" .", ".").strip()
+    # "Details: ." reads worse than no trailing label at all.
+    stripped = re.sub(r"\b(Details|The plan|Follow along here):\s*\.?", "", stripped).strip()
+    return re.sub(r"\s+", " ", stripped).strip(), url
+
+
 async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -98,11 +132,15 @@ async def _post(path: str, payload: dict[str, Any]) -> LinqResult:
     except Exception as exc:  # network, DNS, timeout, bad JSON
         return LinqResult(ok=False, error=f"{type(exc).__name__}: {exc}")
 
-    message = data.get("message") or data.get("data") or {}
-    chat = data.get("chat") or message.get("chat") or {}
+    # Two response shapes: a send returns {chat_id, message}, a chat creation
+    # returns {chat: {id, ..., message}}. Both are flattened to the same thing.
+    chat = data.get("chat") or {}
+    message = data.get("message") or chat.get("message") or data.get("data") or {}
+    if not isinstance(message, dict):
+        message = {}
     return LinqResult(
         ok=True,
-        chat_id=chat.get("id") or message.get("chat_id") or data.get("chat_id"),
+        chat_id=data.get("chat_id") or chat.get("id") or message.get("chat_id"),
         message_id=message.get("id") or data.get("id"),
         raw=data,
     )
@@ -174,18 +212,30 @@ async def create_group_chat(
             message_id=_mock_id("msg", chat_id, opening_message),
         )
 
-    payload: dict[str, Any] = {
-        "to": recipients,
-        "message": {"parts": text_parts(opening_message)},
-    }
+    # POST /v3/chats requires `from`, and a group chat takes at most 31
+    # handles. Without a line we cannot open a group at all, and quietly
+    # opening a one-to-one instead would silently lose the whole point.
     from_number = await sending_number()
-    if from_number:
-        payload["from"] = from_number
-        result = await _post("chats", payload)
-    else:
-        result = await _post("messages", payload)
-    if result.ok and name and result.chat_id:
-        await set_group_name(result.chat_id, name)
+    if not from_number:
+        return LinqResult(ok=False, error="no Linq line available to send from")
+    if len(recipients) > 31:
+        return LinqResult(ok=False, error=f"{len(recipients)} recipients exceeds the 31 limit")
+
+    opening, link = split_link(opening_message)
+    result = await _post(
+        "chats",
+        {
+            "from": from_number,
+            "to": recipients,
+            "message": {"parts": text_parts(opening)},
+        },
+    )
+    if result.ok and result.chat_id:
+        if name:
+            await set_group_name(result.chat_id, name)
+        if link:
+            # The link could not ride on the opening message, so it follows it.
+            await send_to_chat(result.chat_id, link)
     return result
 
 
@@ -197,7 +247,7 @@ async def set_group_name(chat_id: str, name: str) -> LinqResult:
         async with httpx.AsyncClient(timeout=12.0) as client:
             resp = await client.put(
                 _url(f"chats/{chat_id}"), headers=_headers(),
-                json={"group_name": name},
+                json={"display_name": name},
             )
             if resp.status_code >= 400:
                 return LinqResult(ok=False, error=f"{resp.status_code}: {resp.text[:200]}")
@@ -210,7 +260,7 @@ async def add_participant(chat_id: str, handle: str) -> LinqResult:
     """A second caregiver joining an existing circle."""
     if not is_enabled():
         return LinqResult(ok=True, mocked=True, chat_id=chat_id)
-    return await _post(f"chats/{chat_id}/participants", {"handles": [handle]})
+    return await _post(f"chats/{chat_id}/participants", {"handle": handle})
 
 
 # --------------------------------------------------------------------------
@@ -230,7 +280,12 @@ async def send_to_chat(chat_id: str, body: str) -> LinqResult:
 
 
 async def send_direct(to: str, body: str) -> LinqResult:
-    """One-to-one, for an escalation that must not go to the whole circle."""
+    """One-to-one, for an escalation that must not go to the whole circle.
+
+    This may be the first message we have ever sent that person -- an
+    escalation reaches the backup caregiver who was never in the group -- so
+    it is subject to the same no-link-first rule as opening a chat.
+    """
     if contains_phi(body):
         return LinqResult(ok=False, error="refused: body contains clinical detail")
     if not is_enabled():
@@ -239,18 +294,42 @@ async def send_direct(to: str, body: str) -> LinqResult:
             ok=True, mocked=True, chat_id=chat_id,
             message_id=_mock_id("msg", chat_id, body, str(time.time())),
         )
-    return await _post("messages", {"to": [to], "message": {"parts": text_parts(body)}})
+
+    result = await _post("messages", {"to": [to], "message": {"parts": text_parts(body)}})
+    if not result.ok and "1005" in (result.error or ""):
+        # First message to this handle and it carried a link. Split and retry.
+        opening, link = split_link(body)
+        result = await _post(
+            "messages", {"to": [to], "message": {"parts": text_parts(opening)}}
+        )
+        if result.ok and link and result.chat_id:
+            await send_to_chat(result.chat_id, link)
+    return result
 
 
-async def react(message_id: str, reaction_type: str = "like") -> LinqResult:
-    """Tapback our own acknowledgement back at the family, so confirming that
-    we have handled something does not need a whole message of its own."""
+async def react(
+    message_id: str, reaction_type: str = "like", part_index: int = 0
+) -> LinqResult:
+    """Tapback our own acknowledgement back at the family.
+
+    Confirming we have seen a caregiver's reply should not cost a whole
+    message. `reaction_type` may be one of Linq's built-ins, or any emoji --
+    an emoji is sent as a `custom` tapback, which is how the check mark the
+    family taps at us is also the one we can tap back.
+    """
     if not is_enabled():
         return LinqResult(ok=True, mocked=True, message_id=message_id)
-    return await _post(
-        f"messages/{message_id}/reactions",
-        {"reaction": {"type": reaction_type, "part_index": 0}},
-    )
+
+    payload: dict[str, Any] = {"operation": "add", "part_index": part_index}
+    if reaction_type in BUILTIN_REACTIONS:
+        payload["type"] = reaction_type
+    else:
+        payload["type"] = "custom"
+        payload["custom_emoji"] = reaction_type
+    return await _post(f"messages/{message_id}/reactions", payload)
+
+
+ACK_TAPBACK = "✅"  # what we tap back to say "seen, we have it"
 
 
 # --------------------------------------------------------------------------

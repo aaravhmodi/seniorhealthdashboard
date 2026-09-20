@@ -519,3 +519,47 @@ def test_a_messaging_outage_never_breaks_a_checkin(client, monkeypatch):
 async def _raise_none():
     return None
 
+
+
+# --------------------------------------------------------------------------
+# Conformance with the published Linq v3 contract
+# --------------------------------------------------------------------------
+def test_an_opening_message_carries_no_url():
+    """Linq rejects the first message to a new chat if it contains a link
+    (400, code 1005). Mock mode hid this completely -- every real circle
+    creation would have failed."""
+    link = "https://carepath.test/c/sen_rosa"
+    opening, url = linq.split_link(caretone.welcome_body("Rosa", ["Priya (daughter)"], link))
+    assert url == link
+    assert "http" not in opening
+    assert opening.endswith(".")
+    assert "Details:" not in opening
+
+
+def test_splitting_a_link_leaves_a_sentence_not_a_stub():
+    opening, url = linq.split_link(caretone.alert_body("Rosa", 3, "https://x.test/c/a"))
+    assert url == "https://x.test/c/a"
+    assert "Details" not in opening
+    assert " ." not in opening
+    assert opening.count("..") == 0
+
+
+def test_a_body_with_no_link_is_unchanged():
+    body = "Care team here. Nothing to do today."
+    assert linq.split_link(body) == (body, None)
+
+
+def test_a_dissatisfied_tapback_is_not_an_acknowledgement():
+    """A thumbs-down or a question mark means the caregiver saw it and is not
+    happy. Treating that as "handled" would stop the escalation clock at
+    exactly the wrong moment."""
+    for bad in ("dislike", "question", "laugh"):
+        assert bad not in linq.ACK_REACTIONS
+    for good in ("like", "love", "emphasize", "✅"):
+        assert good in linq.ACK_REACTIONS
+
+
+def test_a_check_mark_is_sent_as_a_custom_tapback():
+    """iMessage has no check-mark tapback; Linq carries it as type custom."""
+    assert linq.ACK_TAPBACK not in linq.BUILTIN_REACTIONS
+    assert linq.ACK_TAPBACK in linq.ACK_REACTIONS
