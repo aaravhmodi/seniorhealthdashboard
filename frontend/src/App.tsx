@@ -499,6 +499,7 @@ function Dashboard({
   const [evaluation, setEvaluation] = useState(demoEvaluation);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const languageLoaded = useRef(false);
   useEffect(() => {
     const voiceLanguage = (event: Event) =>
       i18n.changeLanguage(
@@ -513,6 +514,14 @@ function Dashboard({
     return () =>
       window.removeEventListener("carepath:voice-language", voiceLanguage);
   }, [i18n, senior.id]);
+  useEffect(() => {
+    const saved = localStorage.getItem(`carepath-language:${senior.id}`);
+    if (saved) i18n.changeLanguage(supportedLanguage(saved));
+    languageLoaded.current = true;
+  }, [i18n, senior.id]);
+  useEffect(() => {
+    if (languageLoaded.current) localStorage.setItem(`carepath-language:${senior.id}`, supportedLanguage(i18n.language));
+  }, [i18n.language, senior.id]);
   const addCheckin = async () => {
     if (!message.trim() || saving) return;
     setSaving(true);
