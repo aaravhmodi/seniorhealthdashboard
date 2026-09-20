@@ -24,11 +24,11 @@ const componentCopy = {
 }
 
 const reminderCopy = {
-  en: { textReminders: 'Text reminders', sendTextReminder: 'Send a text reminder', reminderDescription: 'Choose who should receive this reminder. Messages do not include health details.', sendText: 'Send text' },
-  es: { textReminders: 'Recordatorios por texto', sendTextReminder: 'Enviar un recordatorio por texto', reminderDescription: 'Elija quién debe recibir este recordatorio. Los mensajes no incluyen detalles de salud.', sendText: 'Enviar texto' },
-  pt: { textReminders: 'Lembretes por mensagem', sendTextReminder: 'Enviar um lembrete por mensagem', reminderDescription: 'Escolha quem deve receber este lembrete. As mensagens não incluem detalhes de saúde.', sendText: 'Enviar mensagem' },
-  zh: { textReminders: '短信提醒', sendTextReminder: '发送短信提醒', reminderDescription: '选择谁应收到这条提醒。短信不包含健康详情。', sendText: '发送短信' },
-  hi: { textReminders: 'टेक्स्ट रिमाइंडर', sendTextReminder: 'टेक्स्ट रिमाइंडर भेजें', reminderDescription: 'चुनें कि यह रिमाइंडर किसे मिलना चाहिए। संदेश में स्वास्थ्य विवरण शामिल नहीं होते।', sendText: 'टेक्स्ट भेजें' },
+  en: { textReminders: 'Text reminders', sendTextReminder: 'Send a text reminder', reminderDescription: 'Choose who should receive this reminder. Messages do not include health details.', sendText: 'Send text', dailyRoutine: 'Daily routine', instructions: 'Care instructions' },
+  es: { textReminders: 'Recordatorios por texto', sendTextReminder: 'Enviar un recordatorio por texto', reminderDescription: 'Elija quién debe recibir este recordatorio. Los mensajes no incluyen detalles de salud.', sendText: 'Enviar texto', dailyRoutine: 'Rutina diaria', instructions: 'Instrucciones de cuidado' },
+  pt: { textReminders: 'Lembretes por mensagem', sendTextReminder: 'Enviar um lembrete por mensagem', reminderDescription: 'Escolha quem deve receber este lembrete. As mensagens não incluem detalhes de saúde.', sendText: 'Enviar mensagem', dailyRoutine: 'Rotina diária', instructions: 'Instruções de cuidado' },
+  zh: { textReminders: '短信提醒', sendTextReminder: '发送短信提醒', reminderDescription: '选择谁应收到这条提醒。短信不包含健康详情。', sendText: '发送短信', dailyRoutine: '日常作息', instructions: '护理说明' },
+  hi: { textReminders: 'टेक्स्ट रिमाइंडर', sendTextReminder: 'टेक्स्ट रिमाइंडर भेजें', reminderDescription: 'चुनें कि यह रिमाइंडर किसे मिलना चाहिए। संदेश में स्वास्थ्य विवरण शामिल नहीं होते।', sendText: 'टेक्स्ट भेजें', dailyRoutine: 'दैनिक दिनचर्या', instructions: 'देखभाल निर्देश' },
 }
 
 i18n.use(initReactI18next).init({ resources: { en: { translation: { ...en, ...componentCopy.en, ...reminderCopy.en } }, es: { translation: { ...es, ...componentCopy.es, ...reminderCopy.es } }, pt: { translation: { ...pt, ...componentCopy.pt, ...reminderCopy.pt } }, zh: { translation: { ...zh, ...componentCopy.zh, ...reminderCopy.zh } }, hi: { translation: { ...hi, ...componentCopy.hi, ...reminderCopy.hi } } }, fallbackLng: 'en', lng: 'en', interpolation: { escapeValue: false } })
