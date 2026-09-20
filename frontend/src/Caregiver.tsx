@@ -16,7 +16,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, HeartPulse, Phone, Users } from 'lucide-react'
 import { api } from './api'
-import type { Alert, CareCircle, Evaluation, Senior, Timeline } from './types'
+import type { CaregiverView } from './types'
 
 const LEVEL_TONE: Record<number, { label: string; className: string }> = {
   1: { label: 'Steady', className: 'level-1' },
@@ -25,64 +25,46 @@ const LEVEL_TONE: Record<number, { label: string; className: string }> = {
   4: { label: 'Emergency help now', className: 'level-4' },
 }
 
-/** `/c/sen_rosa?ev=eval_00051` -> the ids, or null when this is not that route. */
-export function caregiverRoute(pathname: string, search: string) {
-  const match = /^\/c\/([A-Za-z0-9_-]+)\/?$/.exec(pathname)
-  if (!match) return null
-  return { seniorId: match[1], evaluationId: new URLSearchParams(search).get('ev') || undefined }
+/** `/c/<signed token>` -> the token, or null when this is not that route.
+ *
+ * The path used to carry the senior's id, which made the link a guess rather
+ * than a credential. It now carries a signed, expiring token; this only has to
+ * recognise the shape and hand it to the API, which does the verifying. */
+export function caregiverRoute(pathname: string) {
+  const match = /^\/c\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/?$/.exec(pathname)
+  return match ? { token: match[1] } : null
 }
 
-export default function Caregiver({ seniorId }: { seniorId: string; evaluationId?: string }) {
-  const [senior, setSenior] = useState<Senior | null>(null)
-  const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
-  const [timeline, setTimeline] = useState<Timeline | null>(null)
-  const [circle, setCircle] = useState<CareCircle | null>(null)
-  const [alerts, setAlerts] = useState<Alert[]>([])
+export default function Caregiver({ token }: { token: string }) {
+  const [view, setView] = useState<CaregiverView | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let live = true
-    void (async () => {
-      try {
-        const person = await api.senior(seniorId)
-        if (!live) return
-        setSenior(person)
-      } catch {
-        // A wrong or expired link must say so plainly rather than render an
-        // empty page that looks like "nothing is wrong".
-        if (live) setError('This link is not valid. Please contact the care team.')
-        return
-      }
-      // The rest is best-effort: a senior with no evaluation yet is a real
-      // state, not an error.
-      const settle = <T,>(p: Promise<T>) => p.catch(() => null)
-      const [ev, tl, cl, al] = await Promise.all([
-        settle(api.latestEvaluation(seniorId)), settle(api.timeline(seniorId)),
-        settle(api.circle(seniorId)), settle(api.alerts(seniorId)),
-      ])
-      if (!live) return
-      setEvaluation(ev); setTimeline(tl); setCircle(cl); setAlerts(al || [])
-    })()
+    void api.caregiverView(token)
+      .then(data => { if (live) setView(data) })
+      // A refused or expired link says so plainly. Rendering an empty page
+      // would read as "nothing is wrong", which is the one wrong answer.
+      .catch(() => { if (live) setError('This link has expired or is not valid. Please contact the care team.') })
     return () => { live = false }
-  }, [seniorId])
-
-  const openAlert = alerts.find(a => !a.resolved)
-  const me = circle?.members.find(m => m.role === 'caregiver')
+  }, [token])
 
   const acknowledge = async () => {
-    if (!openAlert || !me?.caregiver_id || busy) return
+    if (busy) return
     setBusy(true)
     try {
-      const updated = await api.acknowledge(openAlert.id, me.caregiver_id)
-      setAlerts(current => current.map(a => (a.id === updated.id ? updated : a)))
+      await api.caregiverAck(token)
+      const fresh = await api.caregiverView(token)
+      setView(fresh)
     } catch { setError('That could not be saved. Please call the care team.') }
     finally { setBusy(false) }
   }
 
   if (error) return <main className="caregiver-page"><section className="caregiver-card"><h1>{error}</h1></section></main>
-  if (!senior) return <main className="caregiver-page"><section className="caregiver-card"><p className="muted">Loading…</p></section></main>
+  if (!view) return <main className="caregiver-page"><section className="caregiver-card"><p className="muted">Loading…</p></section></main>
 
+  const { senior, evaluation, baseline, timeline, circle, open_alert: openAlert } = view
   const level = evaluation?.level ?? 1
   const tone = LEVEL_TONE[level]
   const firstName = senior.display_name.split(' ')[0]
@@ -103,7 +85,7 @@ export default function Caregiver({ seniorId }: { seniorId: string; evaluationId
         {level >= 3 && <p className="status-urgent"><AlertTriangle size={18}/> If this is an emergency, call 911.</p>}
       </section>
 
-      {openAlert && me?.caregiver_id && (
+      {openAlert && !openAlert.acknowledged && (
         <section className="caregiver-card ack-card">
           <p>The care team is waiting to hear that someone has seen this.</p>
           <button className="primary-button big-button" disabled={busy} onClick={() => void acknowledge()}>
@@ -112,10 +94,7 @@ export default function Caregiver({ seniorId }: { seniorId: string; evaluationId
           {openAlert.escalations > 0 && <p className="muted">Already passed on to {openAlert.escalations + 1} people.</p>}
         </section>
       )}
-      {openAlert && openAlert.resolved === false && !me?.caregiver_id && (
-        <section className="caregiver-card ack-card"><p className="muted">Reply to the text, or tap back on it, to tell us you have seen this.</p></section>
-      )}
-      {alerts.some(a => a.resolved) && !openAlert && (
+      {!openAlert && view.acknowledged && (
         <section className="caregiver-card ack-card"><p><Check size={18}/> Someone has acknowledged the latest alert.</p></section>
       )}
 
@@ -133,20 +112,20 @@ export default function Caregiver({ seniorId }: { seniorId: string; evaluationId
         </section>
       )}
 
-      {timeline && timeline.baseline.checkin_count > 0 && (
+      {baseline.checkin_count > 0 && (
         <section className="caregiver-card">
           <h2>Compared with their usual</h2>
           <p className="muted">
-            {timeline.baseline.checkin_count} check-ins over the last {timeline.baseline.window_days} days.
-            {timeline.baseline.trending_up.length > 0 && ` Getting more frequent: ${timeline.baseline.trending_up.join(', ')}.`}
+            {baseline.checkin_count} check-ins over the last {baseline.window_days} days.
+            {baseline.trending_up.length > 0 && ` Getting more frequent: ${baseline.trending_up.join(', ')}.`}
           </p>
         </section>
       )}
 
-      {timeline && timeline.entries.length > 0 && (
+      {timeline.length > 0 && (
         <section className="caregiver-card">
           <h2>Recent activity</h2>
-          {timeline.entries.slice(0, 8).map((entry, index) => (
+          {timeline.map((entry, index) => (
             <p className="compact-item" key={`${entry.at}-${index}`}>
               <strong>{entry.summary}</strong><br/><span className="muted">{new Date(entry.at).toLocaleString()}</span>
             </p>
@@ -154,10 +133,10 @@ export default function Caregiver({ seniorId }: { seniorId: string; evaluationId
         </section>
       )}
 
-      {circle && circle.members.length > 0 && (
+      {circle.members.length > 0 && (
         <section className="caregiver-card">
           <h2><Users size={18}/> Who is in this circle</h2>
-          <ul className="action-list">{circle.members.map(m => <li key={m.handle}>{m.name}</li>)}</ul>
+          <ul className="action-list">{circle.members.map(m => <li key={m.name}>{m.name}</li>)}</ul>
         </section>
       )}
 

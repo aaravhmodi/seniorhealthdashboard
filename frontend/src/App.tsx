@@ -840,14 +840,8 @@ export default function App() {
   // The link in every Linq text lands on /c/<senior_id>. It is a public,
   // read-mostly view for a caregiver who is not signed in, so it is checked
   // before any of the account flow below.
-  const caregiver = caregiverRoute(window.location.pathname, window.location.search);
-  if (caregiver)
-    return (
-      <Caregiver
-        seniorId={caregiver.seniorId}
-        evaluationId={caregiver.evaluationId}
-      />
-    );
+  const caregiver = caregiverRoute(window.location.pathname);
+  if (caregiver) return <Caregiver token={caregiver.token} />;
   return <AccountApp />;
 }
 

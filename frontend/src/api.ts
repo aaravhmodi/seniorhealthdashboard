@@ -1,4 +1,4 @@
-import type { Alert, CareCircle, CheckIn, CheckInResponse, Evaluation, Senior, Timeline } from './types'
+import type { CaregiverView, CheckIn, CheckInResponse, Senior } from './types'
 import { accessToken } from './supabase'
 
 const base = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
@@ -15,12 +15,11 @@ export const api = {
   senior: (id: string) => request<Senior>(`/seniors/${id}`),
   // The caregiver view, opened from the link in a Linq text. Everything the
   // SMS deliberately left out lives behind these three calls.
-  latestEvaluation: (id: string) => request<Evaluation>(`/seniors/${id}/latest-evaluation`),
-  timeline: (id: string) => request<Timeline>(`/seniors/${id}/timeline`),
-  circle: (id: string) => request<CareCircle>(`/circle/${id}`),
-  acknowledge: (alertId: string, caregiverId: string) =>
-    request<Alert>(`/circle/alerts/${alertId}/ack`, { method: 'POST', body: JSON.stringify({ caregiver_id: caregiverId }) }),
-  alerts: (id: string) => request<Alert[]>(`/circle/${id}/alerts`),
+  // The caregiver page authenticates with the signed link itself, not a
+  // session: whoever opens it has never signed in and never will. One call,
+  // because each extra endpoint is another chance to get the check wrong.
+  caregiverView: (token: string) => request<CaregiverView>(`/caregiver/${token}`),
+  caregiverAck: (token: string) => request<{ acknowledged: boolean }>(`/caregiver/${token}/ack`, { method: 'POST' }),
   checkins: (id: string) => request<CheckIn[]>(`/seniors/${id}/checkins`),
   checkin: (id: string) => request<CheckInResponse>(`/checkins/${id}`),
   createCheckIn: (payload: { senior_id: string; text: string; language: string; source: string }) =>

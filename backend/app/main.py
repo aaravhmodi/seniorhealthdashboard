@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from . import followup, linq, linq_events, persistence
+from . import auth, followup, linq, linq_events, links, persistence
 from .config import get_settings
 from .routers import api, ws
 from .schemas import CONTRACT_VERSION
@@ -47,6 +47,11 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
+    auth.warn_if_open()
+    if not links.configured():
+        log.warning(
+            "CAREGIVER_LINK_SECRET is unset; family texts will carry no detail link"
+        )
     seed(store)
     # Anything a previous process learned -- open circles, unacknowledged
     # alerts, scheduled follow-ups -- comes back before the scheduler starts,

@@ -42,13 +42,16 @@ def compose(senior: Senior, evaluation: Evaluation, caregiver: Caregiver) -> str
     one text -- and keeps the PHI assertion here, where it has always been,
     so no change to the voice can quietly smuggle a symptom into an SMS.
     """
-    settings = get_settings()
-    link = f"{settings.public_web_base}/c/{senior.id}?ev={evaluation.id}"
+    # The signed, expiring link -- not the senior's id in a path, which is
+    # what this used to build and what made the link a guess.
+    link = circle.detail_link(senior.id, evaluation.id)
     first_name = senior.display_name.split()[0]
     body = caretone.alert_body(
         first_name, int(evaluation.level), link, caregiver_name=caregiver.name
     )
-    assert not any(b in body.lower() for b in _BANNED_SUBSTRINGS), "PHI leaked into SMS"
+    # Over the prose, not the link: the signed token in the URL is base64 and
+    # will sometimes contain "mg" by pure chance. See linq.contains_phi.
+    assert not linq.contains_phi(body), "PHI leaked into SMS"
     return body
 
 

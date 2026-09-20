@@ -29,7 +29,7 @@ import threading
 from datetime import timedelta
 from typing import Optional
 
-from . import caretone, linq
+from . import caretone, linq, links
 from .config import get_settings
 from .events import bus
 from .schemas import (
@@ -53,10 +53,21 @@ log = logging.getLogger("carepath.circle")
 
 
 def detail_link(senior_id: str, evaluation_id: str | None = None) -> str:
-    """Where the detail lives. The text carries this; never the detail itself."""
+    """Where the detail lives. The text carries this; never the detail itself.
+
+    The path carries a signed, expiring token rather than the senior's id. The
+    link is the credential -- the person opening it is a daughter on a
+    sidewalk who has never signed into anything. See links.py.
+    """
     base = get_settings().public_web_base.rstrip("/")
-    suffix = f"?ev={evaluation_id}" if evaluation_id else ""
-    return f"{base}/c/{senior_id}{suffix}"
+    try:
+        return f"{base}/c/{links.mint(senior_id, evaluation_id)}"
+    except links.LinkError:
+        # No signing secret. Rather than mint a guessable link, point at the
+        # app's front door: the family gets a working message and no promise
+        # of detail we cannot protect.
+        log.error("CAREGIVER_LINK_SECRET is unset; sending a link with no detail page")
+        return base
 
 
 def consented(senior: Senior, caregiver: Caregiver) -> bool:

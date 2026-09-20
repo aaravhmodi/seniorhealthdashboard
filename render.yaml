@@ -57,6 +57,20 @@ services:
       - key: LINQ_CARE_TEAM_NUMBER
         sync: false
 
+      # -- Access control ------------------------------------------------
+      # Signs the caregiver link. Without it no detail link is sent at all --
+      # the alternative is a guessable /c/<senior_id>, which is what this
+      # replaced. Any long random string; rotating it expires every live link.
+      - key: CAREGIVER_LINK_SECRET
+        sync: false
+      # Locks the patient-data endpoints. Leave both unset and every endpoint
+      # serves conditions, medications and caregiver phone numbers to anyone;
+      # the server warns about it on each boot and /healthz reports auth_mode.
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: API_SHARED_SECRET
+        sync: false
+
       # -- Supabase (durable state) --------------------------------------
       # Without these the free tier's 15-minute sleep drops every open circle,
       # unacknowledged alert and scheduled follow-up. Run

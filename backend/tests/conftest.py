@@ -19,6 +19,9 @@ def deterministic_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "")
     monkeypatch.setenv("MOCK_MODE", "true")
+    # A fixed signing key, so tests exercise the real signed-link path rather
+    # than the unconfigured fallback. Deterministic, and obviously not a secret.
+    monkeypatch.setenv("CAREGIVER_LINK_SECRET", "test-link-secret")
     # A developer may have loaded the real warehouse under backend/data.
     # Tests must never change behavior based on that local, mutable state.
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "empty.duckdb"))

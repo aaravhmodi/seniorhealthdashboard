@@ -112,8 +112,23 @@ def assert_configured() -> None:
         raise LinqError("LINQ_API_KEY is not configured")
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
 def contains_phi(body: str) -> bool:
-    return any(b in body.lower() for b in _BANNED_SUBSTRINGS)
+    """Does the prose carry clinical detail?
+
+    The check runs over the words only, with any URL removed first. A link is
+    opaque -- ours carries a base64 signed token -- and its characters mean
+    nothing. Left in, roughly one token in seventeen happens to contain "mg"
+    and the whole alert is refused: a family silently not told, because of a
+    coincidence in a signature.
+
+    The link itself is safe by construction: `links.mint` puts an id and an
+    expiry in it and nothing else.
+    """
+    prose = _URL_RE.sub(" ", body or "")
+    return any(b in prose.lower() for b in _BANNED_SUBSTRINGS)
 
 
 def _headers() -> dict[str, str]:
@@ -130,9 +145,6 @@ def _url(path: str) -> str:
 
 def text_parts(body: str) -> list[dict[str, str]]:
     return [{"type": "text", "value": body}]
-
-
-_URL_RE = re.compile(r"https?://\S+")
 
 
 def split_link(body: str) -> tuple[str, Optional[str]]:

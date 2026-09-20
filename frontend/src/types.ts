@@ -25,8 +25,19 @@ export interface CheckInResponse { checkin: CheckIn; evaluation: Evaluation }
 export interface TimelineEntry { at: string; type: string; level?: ActionLevel; summary: string; detail?: Record<string, unknown> }
 export interface BaselineSummary { window_days: number; checkin_count: number; mean_level: number; trending_up: string[]; trending_down: string[] }
 export interface Timeline { senior_id: string; entries: TimelineEntry[]; baseline: BaselineSummary }
-export interface CircleMember { handle: string; name: string; role: 'patient' | 'caregiver' | 'care_team'; caregiver_id?: string }
-export interface CareCircle { senior_id: string; chat_id?: string; group_name: string; members: CircleMember[]; status: string; mocked: boolean }
+// Names and roles only -- the caregiver payload carries no phone numbers, so
+// a forwarded link cannot hand out the family's contact details.
+export interface CircleMember { name: string; role: 'patient' | 'caregiver' | 'care_team' }
+export interface OpenAlert { id: string; level: ActionLevel; created_at: string; escalations: number; acknowledged: boolean }
+export interface CaregiverView {
+  senior: { id: string; display_name: string; age: number; preferred_language: string }
+  evaluation: Evaluation | null
+  baseline: BaselineSummary
+  timeline: TimelineEntry[]
+  circle: { members: CircleMember[] }
+  open_alert: OpenAlert | null
+  acknowledged: boolean
+}
 export interface AlertAck { caregiver_id: string; at: string; via: string }
 export interface Alert {
   id: string; senior_id: string; level: ActionLevel; created_at: string; body: string

@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # picks it up instead, so a rate limit never blocks a check-in.
     linq_max_wait_s: float = 8.0
 
+    # -- Access control ---------------------------------------------------
+    # Signs the caregiver link. Unset means links cannot be minted at all,
+    # which the API reports as a 503 rather than falling back to a known key.
+    caregiver_link_secret: str = ""
+    link_ttl_days: float = 7.0
+    # Supabase project JWT secret (Settings > API > JWT Settings). Set this and
+    # every patient-data endpoint requires a signed-in user.
+    supabase_jwt_secret: str = ""
+    supabase_jwt_audience: str = "authenticated"
+    # A bearer for the Postman collection and the smoke script, which have no
+    # Supabase session. Works alongside the JWT, not instead of it.
+    api_shared_secret: str = ""
+
     # -- Supabase (durable state) -----------------------------------------
     # Unset means in-memory only, which is exactly how this ran before. The
     # service-role key bypasses RLS and is backend-only: it must never be

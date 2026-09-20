@@ -487,3 +487,6 @@ class Health(BaseModel):
     contract_version: str = CONTRACT_VERSION
     mock_mode: bool = True
     seeded_seniors: int = 0
+    # "open" means every endpoint serves patient data to anyone. Surfaced here
+    # so the state is visible rather than assumed.
+    auth_mode: Literal["open", "supabase", "shared-secret"] = "open"
