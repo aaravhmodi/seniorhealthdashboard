@@ -83,9 +83,9 @@ REGISTERS: dict[int, Register] = {
     ),
     2: Register(
         warning_shot="a small update",
-        status="checked in, and something is worth a call to the clinic today",
-        empathy="Likely manageable, and better handled today than Monday",
-        ask="Please call the clinic today; reply CALL to request a nurse call",
+        status="checked in, and the recommendation is to call the clinic today. This is not an emergency",
+        empathy="",
+        ask="Reply CALL to request a nurse call",
         reply_hint="Tap back so we know you saw this",
     ),
     3: Register(

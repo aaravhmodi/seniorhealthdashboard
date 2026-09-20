@@ -97,7 +97,8 @@ def test_every_family_message_carries_a_link_and_no_phi():
 def test_status_reply_is_concrete_and_does_not_assign_an_unnamed_caller():
     body = caretone.status_reply_body("Rosa", 2, "earlier today", "https://carepath.test/c/sen_rosa")
     assert "Someone should make that call" not in body
-    assert "Please call the clinic today" in body
+    assert "recommendation is to call the clinic today" in body
+    assert "This is not an emergency" in body
     assert "Rosa" not in body
 
 
