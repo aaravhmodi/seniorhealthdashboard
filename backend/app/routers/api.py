@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import (
     APIRouter,
     Body,
+    Depends,
     File,
     Form,
     Header,
@@ -21,7 +22,7 @@ from ..config import get_settings
 from ..evidence import baseline_cards, faers_cards, neiss_cards
 from ..extraction import extract
 from ..handoff import build_packet, should_build
-from .. import caretone, circle, followup, linq, linq_events, llm, persistence, retrieval, voice
+from .. import auth, caretone, circle, followup, linq, linq_events, links, llm, persistence, retrieval, voice
 from ..ladder import evaluate
 from ..notify import notify_caregivers
 from ..persona import TEACH_BACK, voice_output_available
@@ -73,7 +74,9 @@ def _get_senior(senior_id: str) -> Senior:
 @router.get("/healthz", response_model=Health, tags=["meta"])
 def healthz() -> Health:
     return Health(
-        mock_mode=get_settings().mock_mode, seeded_seniors=len(store.seniors)
+        mock_mode=get_settings().mock_mode,
+        seeded_seniors=len(store.seniors),
+        auth_mode=auth.mode(),
     )
 
 
@@ -81,12 +84,12 @@ def healthz() -> Health:
 # Seniors
 # --------------------------------------------------------------------------
 @router.get("/seniors", response_model=list[Senior], tags=["seniors"])
-def list_seniors() -> list[Senior]:
+def list_seniors(_: auth.Principal = Depends(auth.require_user)) -> list[Senior]:
     return store.list_seniors()
 
 
 @router.post("/seniors", response_model=Senior, status_code=201, tags=["seniors"])
-def create_senior(senior: Senior) -> Senior:
+def create_senior(senior: Senior, _: auth.Principal = Depends(auth.require_user)) -> Senior:
     """Create a patient profile after a user completes onboarding."""
     existing = store.get_senior(senior.id)
     if existing:
@@ -96,14 +99,13 @@ def create_senior(senior: Senior) -> Senior:
 
 
 @router.get("/seniors/{senior_id}", response_model=Senior, tags=["seniors"])
-def get_senior(senior_id: str) -> Senior:
+def get_senior(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> Senior:
     return _get_senior(senior_id)
 
 
 @router.get("/seniors/{senior_id}/timeline", response_model=Timeline, tags=["seniors"])
 def get_timeline(
-    senior_id: str, window_days: int = Query(default=14, ge=1, le=90)
-) -> Timeline:
+    senior_id: str, window_days: int = Query(default=14, ge=1, le=90), _: auth.Principal = Depends(auth.require_user)) -> Timeline:
     _get_senior(senior_id)
     return Timeline(
         senior_id=senior_id,
@@ -116,8 +118,7 @@ def get_timeline(
     "/seniors/{senior_id}/baseline", response_model=BaselineSummary, tags=["seniors"]
 )
 def get_baseline(
-    senior_id: str, window_days: int = Query(default=14, ge=1, le=90)
-) -> BaselineSummary:
+    senior_id: str, window_days: int = Query(default=14, ge=1, le=90), _: auth.Principal = Depends(auth.require_user)) -> BaselineSummary:
     _get_senior(senior_id)
     return store.baseline(senior_id, window_days)
 
@@ -126,8 +127,7 @@ def get_baseline(
     "/seniors/{senior_id}/checkins", response_model=list[CheckIn], tags=["seniors"]
 )
 def list_checkins(
-    senior_id: str, limit: int = Query(default=20, ge=1, le=200)
-) -> list[CheckIn]:
+    senior_id: str, limit: int = Query(default=20, ge=1, le=200), _: auth.Principal = Depends(auth.require_user)) -> list[CheckIn]:
     _get_senior(senior_id)
     return store.checkins_for(senior_id, limit)
 
@@ -136,7 +136,7 @@ def list_checkins(
 # Check-ins -- the one endpoint the whole demo runs through
 # --------------------------------------------------------------------------
 @router.post("/checkins", response_model=CheckInResponse, tags=["checkins"])
-async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
+async def create_checkin(payload: CheckInCreate, _: auth.Principal = Depends(auth.require_user)) -> CheckInResponse:
     senior = _get_senior(payload.senior_id)
 
     language = payload.language or senior.preferred_language
@@ -206,6 +206,7 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
         evidence=evaluation.evidence,
         template_fallback=evaluation.explanation,
         context=context,
+        symptoms=[s.label for s in checkin.symptoms],
     )
     evaluation.explanation = phrased.value
     evaluation.llm_used = phrased.used_model
@@ -297,7 +298,7 @@ async def create_checkin(payload: CheckInCreate) -> CheckInResponse:
 
 
 @router.get("/checkins/{checkin_id}", response_model=CheckInResponse, tags=["checkins"])
-def get_checkin(checkin_id: str) -> CheckInResponse:
+def get_checkin(checkin_id: str, _: auth.Principal = Depends(auth.require_user)) -> CheckInResponse:
     checkin = store.checkins.get(checkin_id)
     if not checkin:
         raise HTTPException(status_code=404, detail="unknown check-in")
@@ -310,7 +311,7 @@ def get_checkin(checkin_id: str) -> CheckInResponse:
 @router.get(
     "/seniors/{senior_id}/latest-evaluation", response_model=Evaluation, tags=["checkins"]
 )
-def latest_evaluation(senior_id: str) -> Evaluation:
+def latest_evaluation(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> Evaluation:
     _get_senior(senior_id)
     ev = store.latest_evaluation(senior_id)
     if not ev:
@@ -322,7 +323,7 @@ def latest_evaluation(senior_id: str) -> Evaluation:
 # Handoff
 # --------------------------------------------------------------------------
 @router.get("/handoff/{senior_id}", response_model=HandoffPacket, tags=["handoff"])
-def get_handoff(senior_id: str, force: bool = False) -> HandoffPacket:
+def get_handoff(senior_id: str, force: bool = False, _: auth.Principal = Depends(auth.require_user)) -> HandoffPacket:
     senior = _get_senior(senior_id)
     packet = store.handoffs.get(senior_id)
     if packet and not force:
@@ -350,7 +351,7 @@ def get_handoff(senior_id: str, force: bool = False) -> HandoffPacket:
 # Internal evidence surface (the data track builds against these)
 # --------------------------------------------------------------------------
 @router.get("/evidence/preview", response_model=list[EvidenceCard], tags=["evidence"])
-def evidence_preview(senior_id: str, text: str) -> list[EvidenceCard]:
+def evidence_preview(senior_id: str, text: str, _: auth.Principal = Depends(auth.require_user)) -> list[EvidenceCard]:
     """Run the evidence lookups against ad-hoc text without storing a check-in."""
     senior = _get_senior(senior_id)
     probe = CheckIn(
@@ -374,7 +375,7 @@ def evidence_preview(senior_id: str, text: str) -> list[EvidenceCard]:
 # Care circle -- the Linq group chat, created when people put their numbers in
 # --------------------------------------------------------------------------
 @router.post("/circle/enroll", response_model=CareCircle, tags=["circle"])
-async def circle_enroll(payload: CircleEnrollRequest) -> CareCircle:
+async def circle_enroll(payload: CircleEnrollRequest, _: auth.Principal = Depends(auth.require_user)) -> CareCircle:
     """Sign-up posts here: caregivers go on the senior, the group chat opens.
 
     This is the moment the family side starts existing. Consent is recorded per
@@ -391,7 +392,7 @@ async def circle_enroll(payload: CircleEnrollRequest) -> CareCircle:
 
 
 @router.get("/circle/{senior_id}", response_model=CareCircle, tags=["circle"])
-def circle_get(senior_id: str) -> CareCircle:
+def circle_get(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> CareCircle:
     _get_senior(senior_id)
     state = store.circles.get(senior_id)
     if not state:
@@ -400,7 +401,7 @@ def circle_get(senior_id: str) -> CareCircle:
 
 
 @router.get("/circle/{senior_id}/alerts", response_model=list[Alert], tags=["circle"])
-def circle_alerts(senior_id: str, open_only: bool = False) -> list[Alert]:
+def circle_alerts(senior_id: str, open_only: bool = False, _: auth.Principal = Depends(auth.require_user)) -> list[Alert]:
     """What we sent the family, and who has answered.
 
     The dashboard's red state comes from here: an alert with no acknowledgement
@@ -417,7 +418,7 @@ def circle_alerts(senior_id: str, open_only: bool = False) -> list[Alert]:
 
 
 @router.post("/circle/alerts/{alert_id}/ack", response_model=Alert, tags=["circle"])
-def circle_ack(alert_id: str, caregiver_id: str = Body(..., embed=True)) -> Alert:
+def circle_ack(alert_id: str, caregiver_id: str = Body(..., embed=True), _: auth.Principal = Depends(auth.require_user)) -> Alert:
     """Acknowledge from the dashboard, for a caregiver who called instead."""
     alert = store.alerts.get(alert_id)
     if not alert:
@@ -430,7 +431,7 @@ def circle_ack(alert_id: str, caregiver_id: str = Body(..., embed=True)) -> Aler
 
 
 @router.post("/circle/alerts/{alert_id}/escalate", response_model=Alert, tags=["circle"])
-async def circle_escalate(alert_id: str) -> Alert:
+async def circle_escalate(alert_id: str, _: auth.Principal = Depends(auth.require_user)) -> Alert:
     """Escalate now rather than waiting out the clock. Used on stage, and by a
     nurse who already knows the first caregiver is unreachable."""
     alert = store.alerts.get(alert_id)
@@ -446,7 +447,7 @@ async def circle_escalate(alert_id: str) -> Alert:
 @router.get(
     "/seniors/{senior_id}/followups", response_model=list[FollowUpJob], tags=["followup"]
 )
-def list_followups(senior_id: str) -> list[FollowUpJob]:
+def list_followups(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> list[FollowUpJob]:
     _get_senior(senior_id)
     return followup.jobs_for(senior_id)
 
@@ -454,7 +455,7 @@ def list_followups(senior_id: str) -> list[FollowUpJob]:
 @router.post(
     "/seniors/{senior_id}/followups", response_model=list[FollowUpJob], tags=["followup"]
 )
-def schedule_followups(senior_id: str) -> list[FollowUpJob]:
+def schedule_followups(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> list[FollowUpJob]:
     """Queue the 24h and 72h checks by hand, for a discharge we did not see."""
     senior = _get_senior(senior_id)
     evaluation = store.latest_evaluation(senior_id)
@@ -464,13 +465,13 @@ def schedule_followups(senior_id: str) -> list[FollowUpJob]:
 
 
 @router.get("/seniors/{senior_id}/care-plan", response_model=CarePlan, tags=["followup"])
-def get_care_plan(senior_id: str) -> CarePlan:
+def get_care_plan(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> CarePlan:
     _get_senior(senior_id)
     return followup.care_plan_for(senior_id)
 
 
 @router.put("/seniors/{senior_id}/care-plan", response_model=CarePlan, tags=["followup"])
-def put_care_plan(senior_id: str, payload: CarePlan) -> CarePlan:
+def put_care_plan(senior_id: str, payload: CarePlan, _: auth.Principal = Depends(auth.require_user)) -> CarePlan:
     """The discharge instructions the teach-back is scored against.
 
     Stored in the words the senior was actually given them in -- scoring a
@@ -484,7 +485,7 @@ def put_care_plan(senior_id: str, payload: CarePlan) -> CarePlan:
 
 
 @router.post("/teachback", response_model=TeachBackResult, tags=["followup"])
-async def teach_back(payload: TeachBackRequest) -> TeachBackResult:
+async def teach_back(payload: TeachBackRequest, _: auth.Principal = Depends(auth.require_user)) -> TeachBackResult:
     """The senior says their instructions back; we check what survived.
 
     A miss texts the caregiver. We never tell the senior they got it wrong --
@@ -505,13 +506,13 @@ async def teach_back(payload: TeachBackRequest) -> TeachBackResult:
     "/seniors/{senior_id}/teachbacks", response_model=list[TeachBackResult],
     tags=["followup"],
 )
-def list_teachbacks(senior_id: str) -> list[TeachBackResult]:
+def list_teachbacks(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> list[TeachBackResult]:
     _get_senior(senior_id)
     return list(reversed(store.teachbacks[senior_id]))
 
 
 @router.get("/teachback/prompt/{senior_id}", tags=["followup"])
-def teach_back_prompt(senior_id: str, language: Optional[str] = None) -> dict:
+def teach_back_prompt(senior_id: str, language: Optional[str] = None, _: auth.Principal = Depends(auth.require_user)) -> dict:
     """What to ask, and what we will score it against.
 
     The kiosk needs both: the question in their language, and the instructions
@@ -526,6 +527,121 @@ def teach_back_prompt(senior_id: str, language: Optional[str] = None) -> dict:
         "instructions": plan.instructions,
         "voice_output": voice_output_available(lang),
     }
+
+
+# --------------------------------------------------------------------------
+# The caregiver view -- authenticated by the signed link, not by a session
+# --------------------------------------------------------------------------
+def _claims(token: str):
+    """Read the link, or turn the failure into the right HTTP answer.
+
+    401 for a forged or expired link and 503 for an unconfigured server are
+    different problems and the family should be told which -- but neither
+    message says anything about whether that senior exists.
+    """
+    if not links.configured():
+        raise HTTPException(
+            status_code=503, detail="caregiver links are not configured on this server"
+        )
+    try:
+        return links.verify(token)
+    except links.LinkError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@router.get("/caregiver/{token}", tags=["caregiver"])
+def caregiver_view(token: str) -> dict:
+    """Everything the page behind a Linq text needs, in one call.
+
+    One endpoint rather than four, because each separate call would be another
+    surface to get the authorisation wrong on. The token names exactly one
+    senior and nothing here takes an id from the caller.
+
+    What is deliberately *not* returned: the caregivers' phone numbers. The
+    page has no use for them, and a forwarded link should not hand out the
+    family's contact details.
+    """
+    claims = _claims(token)
+    senior = store.get_senior(claims.senior_id)
+    if not senior:
+        raise HTTPException(status_code=404, detail="unknown senior")
+
+    evaluation = None
+    if claims.evaluation_id:
+        evaluation = store.evaluations.get(claims.evaluation_id)
+        # A token for an evaluation that belongs to somebody else is a forged
+        # token, however good its signature looks.
+        if evaluation and evaluation.senior_id != senior.id:
+            evaluation = None
+    evaluation = evaluation or store.latest_evaluation(senior.id)
+
+    circle_state = store.circles.get(senior.id)
+    open_alerts = circle.open_alerts_for(senior.id)
+
+    return {
+        "senior": {
+            "id": senior.id,
+            "display_name": senior.display_name,
+            "age": senior.age,
+            "preferred_language": senior.preferred_language,
+        },
+        "evaluation": evaluation.model_dump(mode="json") if evaluation else None,
+        "baseline": store.baseline(senior.id).model_dump(mode="json"),
+        "timeline": [
+            e.model_dump(mode="json") for e in store.timeline_for(senior.id)[:8]
+        ],
+        "circle": {
+            "members": [
+                # Names and roles only. No handles.
+                {"name": m.name, "role": m.role}
+                for m in (circle_state.members if circle_state else [])
+            ],
+        },
+        "open_alert": (
+            {
+                "id": open_alerts[0].id,
+                "level": int(open_alerts[0].level),
+                "created_at": open_alerts[0].created_at.isoformat(),
+                "escalations": open_alerts[0].escalations,
+                "acknowledged": bool(open_alerts[0].acks),
+            }
+            if open_alerts else None
+        ),
+        "acknowledged": bool(store.alerts and not open_alerts),
+    }
+
+
+@router.post("/caregiver/{token}/ack", tags=["caregiver"])
+def caregiver_ack(token: str) -> dict:
+    """"I have seen this", from the page instead of from a tapback.
+
+    The caregiver may well open the link rather than tap back, and making her
+    do both would be a worse system. Credited to the first caregiver in the
+    escalation chain, since the link does not identify which of them opened
+    it -- what stops the clock is that *somebody* responded.
+    """
+    claims = _claims(token)
+    senior = store.get_senior(claims.senior_id)
+    if not senior:
+        raise HTTPException(status_code=404, detail="unknown senior")
+
+    open_alerts = circle.open_alerts_for(senior.id)
+    if not open_alerts:
+        return {"ok": True, "acknowledged": True, "note": "nothing was waiting"}
+
+    chain = circle.escalation_chain(senior, open_alerts[0].level)
+    if not chain:
+        raise HTTPException(status_code=409, detail="no caregiver to credit")
+    alert = circle.acknowledge(open_alerts[0], chain[0], via="dashboard")
+    return {"ok": True, "acknowledged": True, "alert_id": alert.id}
+
+
+@router.get("/caregiver/{token}/care-plan", tags=["caregiver"])
+def caregiver_care_plan(token: str) -> dict:
+    """The discharge instructions, for the caregiver going over them."""
+    claims = _claims(token)
+    plan = followup.care_plan_for(claims.senior_id)
+    return {"instructions": plan.instructions, "routines": plan.routines}
 
 
 # --------------------------------------------------------------------------
@@ -864,7 +980,7 @@ def voice_speak(text: str = Body(..., embed=True), language: str = Body("en", em
 
 
 @router.get("/voice/agent-config/{senior_id}", tags=["voice"])
-def voice_agent_config(senior_id: str) -> dict:
+def voice_agent_config(senior_id: str, _: auth.Principal = Depends(auth.require_user)) -> dict:
     """The Settings frame the client sends Deepgram to open a voice session.
 
     Built per senior: their language, their retrieved history, our system
@@ -905,7 +1021,7 @@ def retrieval_search(
 
 
 @router.post("/questions/answer", response_model=SeniorAnswer, tags=["retrieval"])
-def answer_question(payload: SeniorQuestion) -> SeniorAnswer:
+def answer_question(payload: SeniorQuestion, _: auth.Principal = Depends(auth.require_user)) -> SeniorAnswer:
     """Grounded Q&A over senior history, medicines, and loaded datasets."""
     if payload.senior_id:
         _get_senior(payload.senior_id)
@@ -1031,6 +1147,6 @@ def datasets_status() -> dict:
 
 
 @router.get("/events/recent", response_model=list[WSEvent], tags=["events"])
-def recent_events(limit: int = Query(default=25, ge=1, le=200)) -> list[WSEvent]:
+def recent_events(limit: int = Query(default=25, ge=1, le=200), _: auth.Principal = Depends(auth.require_user)) -> list[WSEvent]:
     """Polling fallback, for when the WebSocket is inconvenient (or on stage)."""
     return bus.recent(limit)

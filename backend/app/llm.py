@@ -245,6 +245,7 @@ def explain(
     evidence: list[EvidenceCard],
     template_fallback: str,
     context: RetrievedContext | None = None,
+    symptoms: list[str] | None = None,
 ) -> LLMResult:
     """Rephrase the decision in the senior's language. Never change it.
 
@@ -270,7 +271,8 @@ def explain(
                     f"Decision already made, do not change it: level {int(level)}.\n"
                     f"{LEVEL_INSTRUCTION[int(level)]}\n"
                     f"What triggered it: {reasons}\n"
-                    f"Supporting facts you may refer to:\n{facts}\n"
+                    + (f"Symptoms reported: {', '.join(symptoms)}\n" if symptoms else "")
+                    + f"Supporting facts you may refer to:\n{facts}\n"
                     f"Retrieved context you may refer to:\n{block}\n\n"
                     # Teach-back only where there is a plan to remember.
                     + (TEACH_BACK_RULE + NEWLINE if int(level) >= 2 else "")
@@ -298,6 +300,14 @@ def explain(
         return LLMResult(
             template_fallback, used_model=False, fallback_reason="drifted off the action"
         )
+    if symptoms and int(level) == int(ActionLevel.LOG):
+        candidate_lower = candidate.casefold()
+        if not any(symptom.casefold() in candidate_lower for symptom in symptoms):
+            return LLMResult(
+                template_fallback,
+                used_model=False,
+                fallback_reason="dropped reported symptom",
+            )
     return LLMResult(candidate, used_model=True)
 
 

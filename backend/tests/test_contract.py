@@ -256,6 +256,16 @@ def test_level_one_does_not_wake_the_family(client):
     assert body["notifications"] == []
 
 
+def test_level_one_acknowledges_a_nonurgent_symptom(client):
+    body = client.post(
+        "/checkins",
+        json={"senior_id": "sen_walter", "language": "en", "text": "I have back pain."},
+    ).json()
+    assert body["checkin"]["symptoms"][0]["label"] == "back pain"
+    assert body["evaluation"]["level"] == ActionLevel.LOG
+    assert "back pain" in body["evaluation"]["explanation"].lower()
+
+
 # -- baseline, timeline, handoff -------------------------------------------
 def test_baseline_picks_up_the_two_week_drift(client):
     baseline = client.get("/seniors/sen_rosa/baseline").json()

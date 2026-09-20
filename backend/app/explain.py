@@ -161,6 +161,15 @@ REASON_GENERIC: dict[str, str] = {
     "hi": "आज आपने जो बताया",
 }
 
+REPORTED_ACK: dict[str, str] = {
+    "en": "I heard you mention",
+    "es": "Le escuche mencionar",
+    "fr": "J'ai entendu que vous avez mentionne",
+    "zh": "我听到您提到",
+    "pt": "Ouvi voce mencionar",
+    "hi": "मैंने आपको बताते हुए सुना",
+}
+
 UNSURE_NOTE: dict[str, str] = {
     "en": "I did not hear enough to be sure, so I am being careful.",
     "es": "No escuche lo suficiente para estar segura. Prefiero ir con cuidado.",
@@ -202,6 +211,9 @@ def render_explanation(
 
     def build(code: str) -> str:
         parts = [TEMPLATES[code][int(level)]]
+        if symptoms and int(level) == int(ActionLevel.LOG):
+            ack = REPORTED_ACK.get(code, REPORTED_ACK["en"])
+            parts.insert(0, f"{ack}: {', '.join(symptoms)}.")
         parts.append(f"{REASON_LEAD[code]} {_reason(code, flags, evidence)}.")
         if escalated:
             parts.append(UNSURE_NOTE[code])
