@@ -77,6 +77,10 @@ def test_urgency_never_becomes_volume():
     assert three != four
     assert four.upper() != four
     assert "nine one one" in four  # spoken-out digits, per the persona rules
+    assert "Reply seen" in three
+    assert "Call nine one one now" in four
+    assert "Reply called after you call nine one one" in four
+    assert "we are on it" not in four.lower()
 
 
 def test_every_family_message_carries_a_link_and_no_phi():
@@ -100,6 +104,16 @@ def test_status_reply_is_concrete_and_does_not_assign_an_unnamed_caller():
     assert "recommendation is to call the clinic today" in body
     assert "This is not an emergency" in body
     assert "Rosa" not in body
+
+
+def test_escalation_and_followup_messages_name_the_next_action():
+    link = "https://carepath.test/c/sen_rosa"
+    escalation = caretone.escalation_body("Rosa", "Priya Mendez", link)
+    followup = caretone.followup_body("Rosa", 24, link)
+    assert "have not received an acknowledgement" in escalation
+    assert "coming to you" not in escalation
+    assert "Please ask Rosa to complete the follow-up in the app" in followup
+    assert "You will hear from us either way" not in followup
 
 
 def test_the_transport_refuses_a_body_with_clinical_detail():

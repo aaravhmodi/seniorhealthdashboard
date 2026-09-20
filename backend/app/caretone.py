@@ -76,9 +76,9 @@ class Register:
 REGISTERS: dict[int, Register] = {
     1: Register(
         warning_shot="",
-        status="checked in today, and nothing has changed",
+        status="checked in today; no change was found and no action is needed",
         empathy="",
-        ask="Nothing for you to do",
+        ask="",
         reply_hint="Reply STATUS any time",
     ),
     2: Register(
@@ -90,17 +90,17 @@ REGISTERS: dict[int, Register] = {
     ),
     3: Register(
         warning_shot="this one needs you now",
-        status="checked in, and the safe answer is the emergency department",
-        empathy="A nurse has the details and is expecting them",
-        ask="Get them there, or reply CALL and we will help arrange it",
-        reply_hint="Tap back so we know you saw this",
+        status="checked in; the recommendation is the emergency department now",
+        empathy="",
+        ask="Go to the emergency department now; reply CALL to request a nurse call",
+        reply_hint="Reply seen after you have read this",
     ),
     4: Register(
         warning_shot="this is urgent",
-        status="needs emergency help now, and we have said to call nine one one",
-        empathy="You are not doing this alone. We are on it from this end",
-        ask="Call nine one one, then head there",
-        reply_hint="Reply CALL and we will phone you",
+        status="needs emergency help now",
+        empathy="",
+        ask="Call nine one one now",
+        reply_hint="Reply called after you call nine one one",
     ),
 }
 
@@ -202,10 +202,8 @@ def escalation_body(first_name: str, missed_name: str, link: str) -> str:
     """
     body = _join(
         "Care team here about " + first_name,
-        f"We messaged {missed_name.split()[0]} and have not heard back, so we are "
-        f"coming to you",
-        f"{first_name} needs someone to act on the last update",
-        "Please check the link and reply",
+        f"We have not received an acknowledgement from {missed_name.split()[0]}",
+        "Please open the link and reply CALL if you need a nurse call",
     )
     return _squeeze(f"{body} {link}")
 
@@ -219,8 +217,8 @@ def followup_body(first_name: str, hours: int, link: str) -> str:
     when = "yesterday" if hours <= 24 else "a few days ago"
     body = _join(
         f"Scheduled {hours}-hour check on {first_name}, after the visit {when}",
-        f"We are asking {first_name} a few questions now",
-        "You will hear from us either way",
+        f"Please ask {first_name} to complete the follow-up in the app",
+        "Reply HELP if you need support",
     )
     return _squeeze(f"{body} Follow along here: {link}")
 
@@ -229,10 +227,10 @@ def reminder_body(first_name: str, kind: str, link: str, language: str = "en") -
     """A short, answerable reminder for the senior, with no clinical detail."""
     prompts = {
         "en": {
-            "meds": "Good morning. Just a gentle reminder to take your morning pills. Reply DONE when you have taken them, and I will keep an eye on it",
-            "appointment": "Hi there. Just a friendly reminder about your appointment. Reply DONE when you have seen it, and we will keep things on track",
-            "refill": "Hi there. Your refill reminder is ready. Reply DONE when you have seen it, and we will help you stay on track",
-            "caregiver_update": "Hi there. Your care team has a quick update for you. Reply DONE when you have seen it, and we will keep you posted",
+            "meds": "Good morning. This is a reminder to take your morning pills. Reply DONE after you take them, or HELP if you need support",
+            "appointment": "Hi there. This is a reminder about your appointment. Reply DONE after you see this, or HELP if you need the details",
+            "refill": "Hi there. Your refill reminder is ready. Reply DONE after you see this, or HELP if you need the details",
+            "caregiver_update": "Hi there. Your care team has an update for you. Reply DONE after you see this, or HELP if you need support",
         },
         "es": {"meds": "Buenos dias. Un recordatorio amable para tomar sus pastillas. Responda LISTO cuando las tome"},
         "fr": {"meds": "Bonjour. Un petit rappel pour prendre vos medicaments. Repondez FAIT quand vous les avez pris"},
@@ -256,7 +254,7 @@ def teachback_miss_body(first_name: str, link: str) -> str:
         f"We asked {first_name} to say the plan back in their own words, and part "
         f"of it did not come back",
         "That usually means the instructions were unclear, not that they were not listening",
-        "Worth going over it with them today",
+        "Please review the plan with them today",
     )
     return _squeeze(f"{body} The plan: {link}. Tap back when you have seen this.")
 

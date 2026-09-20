@@ -214,8 +214,8 @@ async def answer_status(senior: Senior, chat_id: Optional[str], to: str) -> bool
         )
     else:
         body = (
-            f"Care team here. {first_name} has not checked in with us yet, so we "
-            f"have nothing new to tell you. Details: {link}."
+            "No check-in has been recorded yet. Reply HELP if you need support. "
+            f"Details: {link}."
         )
 
     result = (
@@ -226,10 +226,10 @@ async def answer_status(senior: Senior, chat_id: Optional[str], to: str) -> bool
 
 
 async def answer_call_request(senior: Senior, chat_id: Optional[str], to: str) -> bool:
-    """They asked for a person. Say when, not "someone will be in touch"."""
+    """They asked for a person without implying a call was already placed."""
     body = (
-        f"Care team here. We have your request and a nurse will call you. "
-        f"If this cannot wait, call nine one one. Details: "
+        "Your nurse-call request is recorded. A call has not been placed yet. "
+        "If this cannot wait, call nine one one. Details: "
         f"{circle.detail_link(senior.id)}."
     )
     result = (
@@ -241,8 +241,8 @@ async def answer_call_request(senior: Senior, chat_id: Optional[str], to: str) -
 
 async def answer_help(senior: Senior, chat_id: Optional[str], to: str) -> bool:
     body = (
-        "Hi, I am here with you. Text STATUS for the latest update, CALL to have a "
-        "nurse phone you, or tap back on an alert to tell us you have seen it. "
+        "Reply STATUS for the latest update. Reply CALL to request a nurse call. "
+        "Tap back on an alert to mark it seen. "
         f"Details: {circle.detail_link(senior.id)}."
     )
     result = (
