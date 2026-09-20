@@ -410,7 +410,10 @@ function Signup({
       conditions: splitList(form.get("conditions")),
       allergies: splitList(form.get("allergies")),
       medications,
-      consent: { sms_reminders: form.get("sms") === "on" },
+      consent: {
+        sms_reminders: form.get("sms") === "on",
+        "share_with:contact": form.get("caregiver-updates") === "on",
+      },
       caregivers: [
         {
           id: "contact",
@@ -569,6 +572,10 @@ function Signup({
                   label={t("phone")}
                   type="tel"
                 />
+                <label className="sms-consent">
+                  <input name="caregiver-updates" type="checkbox" defaultChecked />
+                  {t("caregiverUpdatesConsent")}
+                </label>
               </div>
             </div>
           </section>
@@ -672,6 +679,10 @@ function Profile({
               conditions: splitList(form.get("conditions")),
               allergies: splitList(form.get("allergies")),
               medications,
+              consent: {
+                ...senior.consent,
+                [`share_with:${contact?.id || "contact"}`]: form.get("caregiver-updates") === "on",
+              },
               caregivers: [{
                 id: contact?.id || "contact",
                 name: String(form.get("contact-name") || ""),
@@ -693,7 +704,7 @@ function Profile({
               <div className="full"><h3>{t("emergencyCaregiver")}</h3></div>
               <Field id="contact-name" label={t("fullName")} defaultValue={contact?.name || ""} />
               <Field id="relationship" label={t("relationship")} defaultValue={contact?.relationship || ""} />
-              <div className="full"><Field id="contact-phone" label={t("phone")} type="tel" defaultValue={contact?.phone_e164 || ""} /></div>
+              <div className="full"><Field id="contact-phone" label={t("phone")} type="tel" defaultValue={contact?.phone_e164 || ""} /><label className="sms-consent"><input name="caregiver-updates" type="checkbox" defaultChecked={Boolean(senior.consent?.[`share_with:${contact?.id || "contact"}`])} />{t("caregiverUpdatesConsent")}</label></div>
             </div>
             {saveError && <p className="form-error" role="alert">{saveError}</p>}
             <button className="primary-button" disabled={saving}>{saving ? t("saving") : t("saveChanges")}</button>

@@ -40,5 +40,13 @@ const auditCopy = {
   hi: { care: 'देखभाल', none: 'कुछ भी नहीं जोड़ा गया।', close: 'बंद करें', separateWithCommas: 'आइटम को कॉमा से अलग करें।', remove: 'हटाएँ', healthSupport: 'स्वास्थ्य सहायता, सरल तरीके से।', couldNotSave: 'बदलाव सहेजे नहीं जा सके। कृपया फिर कोशिश करें।', reminderDateTime: 'रिमाइंडर की तारीख और समय', providerHandoffSummary: 'AI प्रदाता हैंडऑफ़ सारांश', providerHandoffDescription: 'यह सारांश बताए गए चेक-इन से बनाया गया है और चिकित्सक की समीक्षा के लिए है।', readAloudUnavailable: 'इस ब्राउज़र में ज़ोर से पढ़ना उपलब्ध नहीं है।' },
 }
 
-i18n.use(initReactI18next).init({ resources: { en: { translation: { ...en, ...componentCopy.en, ...reminderCopy.en, ...auditCopy.en } }, es: { translation: { ...es, ...componentCopy.es, ...reminderCopy.es, ...auditCopy.es } }, pt: { translation: { ...pt, ...componentCopy.pt, ...reminderCopy.pt, ...auditCopy.pt } }, zh: { translation: { ...zh, ...componentCopy.zh, ...reminderCopy.zh, ...auditCopy.zh } }, hi: { translation: { ...hi, ...componentCopy.hi, ...reminderCopy.hi, ...auditCopy.hi } } }, fallbackLng: 'en', lng: 'en', interpolation: { escapeValue: false } })
+const consentCopy = {
+  en: { caregiverUpdatesConsent: 'Allow this emergency contact to receive care updates by text.' },
+  es: { caregiverUpdatesConsent: 'Permitir que este contacto de emergencia reciba actualizaciones de cuidado por texto.' },
+  pt: { caregiverUpdatesConsent: 'Permitir que este contato de emergência receba atualizações de cuidado por mensagem.' },
+  zh: { caregiverUpdatesConsent: '允许此紧急联系人通过短信接收护理更新。' },
+  hi: { caregiverUpdatesConsent: 'इस आपातकालीन संपर्क को टेक्स्ट द्वारा देखभाल अपडेट पाने की अनुमति दें।' },
+}
+
+i18n.use(initReactI18next).init({ resources: { en: { translation: { ...en, ...componentCopy.en, ...reminderCopy.en, ...auditCopy.en, ...consentCopy.en } }, es: { translation: { ...es, ...componentCopy.es, ...reminderCopy.es, ...auditCopy.es, ...consentCopy.es } }, pt: { translation: { ...pt, ...componentCopy.pt, ...reminderCopy.pt, ...auditCopy.pt, ...consentCopy.pt } }, zh: { translation: { ...zh, ...componentCopy.zh, ...reminderCopy.zh, ...auditCopy.zh, ...consentCopy.zh } }, hi: { translation: { ...hi, ...componentCopy.hi, ...reminderCopy.hi, ...auditCopy.hi, ...consentCopy.hi } } }, fallbackLng: 'en', lng: 'en', interpolation: { escapeValue: false } })
 export default i18n
