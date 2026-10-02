@@ -15,7 +15,7 @@ import {
 import { demoSenior } from "./mock";
 import { api } from "./api";
 import { supabase, supabaseConfigured } from "./supabase";
-import type { CarePlan, CheckIn, CheckInResponse, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
+import type { CarePlan, CheckIn, CheckInResponse, FollowUp, HandoffPacket, ReminderJob, RiskAssessment, RiskConcern, RiskDriver, Senior } from "./types";
 import { languageOptions, supportedLanguage } from "./i18n";
 import Caregiver, { caregiverRoute } from "./Caregiver";
 
@@ -84,27 +84,10 @@ function timeGreeting(name: string, language: string) {
   return `${(greetings[language] || greetings.en)[part]}, ${name}.`;
 }
 
-type FollowUpKey = "back-severity" | "back-warning-signs";
+// The question we ask back arrives from the backend already phrased in the
+// senior's language and already chosen by the risk math -- see probes.py.
+// The frontend does not decide what to ask, only how to show it.
 type FollowUpRecord = { question: string; answer: string; checkinId: string };
-const followUpPrompts: Record<FollowUpKey, Record<string, string>> = {
-  "back-severity": {
-    en: "How bad is the back pain from 0 to 10, and did it start suddenly?",
-    es: "\u00bfQu\u00e9 tan fuerte es el dolor de espalda del 0 al 10 y comenz\u00f3 de repente?",
-    pt: "De 0 a 10, qu\u00e3o forte \u00e9 a dor nas costas? Come\u00e7ou de repente?",
-    zh: "\u8170\u80cc\u75bc\u75db\u4ece0到10有多\u75db？是突然开始的吗？",
-    hi: "कमर दर्द 0 से 10 में कितना तेज है? क्या यह अचानक शुरू हुआ?",
-  },
-  "back-warning-signs": {
-    en: "Do you have leg weakness or numbness, trouble walking, or trouble controlling your bladder or bowels?",
-    es: "\u00bfTiene debilidad o adormecimiento en las piernas, dificultad para caminar o para controlar la vejiga o el intestino?",
-    pt: "Voc\u00ea tem fraqueza ou dorm\u00eancia nas pernas, dificuldade para andar ou para controlar a bexiga ou o intestino?",
-    zh: "您的腿是否无力或麻木、走路困难，或无法控制大小便？",
-    hi: "क्या आपके पैरों में कमजोरी या सुन्नपन, चलने में परेशानी, या पेशाब या मल पर नियंत्रण में परेशानी है?",
-  },
-};
-function followUpText(key: FollowUpKey, language: string) {
-  return followUpPrompts[key][language] || followUpPrompts[key].en;
-}
 
 function pdfEscape(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -806,7 +789,44 @@ function ConcernCard({ concern, open, onToggle }: {
 function RiskPanel({ risk }: { risk: RiskAssessment }) {
   const [openCode, setOpenCode] = useState<string | null>(risk.top_concern ?? null);
   const [showModel, setShowModel] = useState(false);
-  if (!risk.concerns.length) return null;
+  // Nothing fired: still show the chart, and say what we looked for. "We
+  // checked and nothing stood out" is not the same as a blank screen.
+  if (!risk.concerns.length) {
+    return (
+      <section className="risk-panel" aria-labelledby="risk-title">
+        <div className="risk-heading">
+          <div>
+            <p className="eyebrow">What this could be</p>
+            <h2 id="risk-title">Nothing specific stood out</h2>
+            <p className="risk-sub">
+              We checked what you told us against the serious possibilities
+              below, and none of them matched. Keep checking in, because
+              change against your own normal is what we watch for.
+            </p>
+          </div>
+        </div>
+        <div className="band-strip">
+          <div className="band-track">
+            {risk.bands.map((band) => (
+              <div
+                key={band.band}
+                className={`band-zone ${BAND_TONE[band.band]}`}
+                style={{ width: `${band.upper_percent - band.lower_percent}%` }}
+              >
+                <span>{band.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        {risk.screened.length > 0 && (
+          <div className="concern-why">
+            <h5>What we checked for</h5>
+            <ul>{risk.screened.map((label) => <li key={label}>{label}</li>)}</ul>
+          </div>
+        )}
+      </section>
+    );
+  }
   const top = risk.concerns[0];
   const others = risk.concerns.length - 1;
 
@@ -975,7 +995,7 @@ function Dashboard({
   const [routineDraft, setRoutineDraft] = useState(plan.routines.join(", "));
   const [instructionDraft, setInstructionDraft] = useState(plan.instructions.join(", "));
   const [appointmentDraft, setAppointmentDraft] = useState({ title: "", date: "", location: "" });
-  const [followUpKey, setFollowUpKey] = useState<FollowUpKey | null>(null);
+  const [pendingFollowUp, setPendingFollowUp] = useState<FollowUp | null>(null);
   const [followUpForId, setFollowUpForId] = useState<string | null>(null);
   const [followUpRecords, setFollowUpRecords] = useState<Record<string, FollowUpRecord[]>>(() => savedValue<Record<string, FollowUpRecord[]>>(`carepath-followups:${senior.id}`) || {});
   const [downloadingHandoff, setDownloadingHandoff] = useState(false);
@@ -1053,7 +1073,10 @@ function Dashboard({
     setSaving(true);
     setError("");
     setShareStatus("");
-    const askedKey = followUpKey;
+    // What was on screen when they started typing. Captured before the await
+    // so the answer is filed against the question they actually saw.
+    const asked = pendingFollowUp;
+    const askedFor = followUpForId;
     try {
       if (!profileRegistered.current) {
         await api.createSenior(senior);
@@ -1067,24 +1090,16 @@ function Dashboard({
       });
       setCheckins((current) => [result.checkin, ...current]);
       setEvaluation(result.evaluation);
-      if (askedKey && followUpForId) {
+      if (asked && askedFor) {
         setFollowUpRecords((current) => ({
           ...current,
-          [followUpForId]: [...(current[followUpForId] || []), { question: followUpText(askedKey, i18n.language), answer: text.trim(), checkinId: result.checkin.id }],
+          [askedFor]: [...(current[askedFor] || []), { question: asked.question, answer: text.trim(), checkinId: result.checkin.id }],
         }));
       }
-      if (askedKey === "back-severity") {
-        setFollowUpKey("back-warning-signs");
-      } else if (askedKey === "back-warning-signs") {
-        setFollowUpKey(null);
-        setFollowUpForId(null);
-      } else if (result.checkin.symptoms.some((symptom) => symptom.label === "back pain")) {
-        setFollowUpKey("back-severity");
-        setFollowUpForId(result.checkin.id);
-      } else {
-        setFollowUpKey(null);
-        setFollowUpForId(null);
-      }
+      // There is always a next question, and the backend picked it from the
+      // risk it just computed. The chain ends only if the server sends none.
+      setPendingFollowUp(result.evaluation.risk?.follow_up ?? null);
+      setFollowUpForId(result.checkin.id);
       updateMessage("");
     } catch (reason) {
       const detail = reason instanceof Error ? ` ${reason.message}` : "";
@@ -1293,14 +1308,19 @@ function Dashboard({
             <p>{t("feeling")}</p>
           </div>
           <section className="checkin-card">
-            {followUpKey && (
+            {pendingFollowUp && (
               <div className="followup-question" role="status">
                 <p className="eyebrow">One more question</p>
-                <h3>{followUpText(followUpKey, i18n.language)}</h3>
-                <p className="helper-text">Your answer helps us choose the safest next step.</p>
+                <h3>{pendingFollowUp.question}</h3>
+                <p className="helper-text">
+                  {pendingFollowUp.opens && pendingFollowUp.concern_label
+                    ? `A yes would add "${pendingFollowUp.concern_label}" to the list below. `
+                    : ""}
+                  {pendingFollowUp.why}
+                </p>
               </div>
             )}
-            <h2>{followUpKey ? "Your answer" : t("tell")}</h2>
+            <h2>{pendingFollowUp ? "Your answer" : t("tell")}</h2>
             <textarea
               value={message}
               onChange={(event) => updateMessage(event.target.value)}

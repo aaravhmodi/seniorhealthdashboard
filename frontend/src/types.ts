@@ -35,8 +35,18 @@ export interface RiskBand {
   band: RiskBandName; label: string; lower_percent: number; upper_percent: number
   action: string; action_level: ActionLevel
 }
+// The question we ask back. `sharpens` is the odds multiplier the answer would
+// put in play, so 1.0 means it changes the handoff and not the number -- and
+// `opens` means a yes would raise a concern that is absent only because nobody
+// has asked yet. The UI must never phrase those two the same way.
+export interface FollowUp {
+  code: string; question: string; why: string
+  concern_code?: string; concern_label?: string
+  sharpens: number; opens: boolean; generic: boolean
+}
 export interface RiskAssessment {
   concerns: RiskConcern[]; top_concern?: string; overall_percent?: number; bands: RiskBand[]
+  screened: string[]; follow_up?: FollowUp
   model_status: string; model_risk_percent?: number; model_auc?: number; model_n?: number
   model_years: string[]; model_holdout_years: string[]; model_basis: string
   model_tokens: string[]; ladder_floor?: ActionLevel; ladder_note: string
